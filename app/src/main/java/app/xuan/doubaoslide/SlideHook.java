@@ -13,6 +13,7 @@ import de.robv.android.xposed.XposedHelpers;
 
 import app.xuan.doubaoslide.GestureGate.Verdict;
 
+import static app.xuan.doubaoslide.GestureGate.ACTION_CANCEL;
 import static app.xuan.doubaoslide.GestureGate.ACTION_DOWN;
 import static app.xuan.doubaoslide.GestureGate.ACTION_LEAVE;
 import static app.xuan.doubaoslide.GestureGate.ACTION_POINTER_DOWN;
@@ -34,6 +35,20 @@ import static app.xuan.doubaoslide.GestureGate.ACTION_UP;
  * MOVE 逐个记下来，UP 时按原坐标、原时间戳、原顺序把 DOWN + 全部 MOVE + UP 送回
  * {@code nativeTouch}。只补一次合成点击是不够的——上滑输符号依赖引擎看到滑动过程，
  * 压平位移等于把上滑变成点击（实测导致五个被映射键的上滑符号失效）。
+ *
+ * <p><b>长按归还。</b>扣住 DOWN 有一个代价：引擎的 native 长按计时器从没启动过，
+ * 于是别的字母长按会弹出「大写 / 字符 / 小写」选择框，被映射的五个键长按什么都不发生
+ * （用户报告的 bug）。实测那个弹框在按住 350–450ms 就出现，早于引擎 501ms 发出的
+ * {@code action=-1}，所以它由 native 层自己画，唯一的开关就是"引擎收到过 DOWN"。
+ * 修法是按住 {@link GestureGate#HAND_BACK_MS} 还没滑过触发线时，把这一次按下补发给
+ * 引擎，让它的计时器跑起来；之后 MOVE 仍然扣住不转发，抬手时再决定：
+ * <ul>
+ *   <li>滑过触发线 → 触发快捷键，然后给引擎发 {@code CANCEL} 撤回它刚建立的预编辑；</li>
+ *   <li>没滑过 → 按原顺序补发 MOVE + UP，引擎看到的就是一次普通长按。</li>
+ * </ul>
+ * 归还之后必须继续扣住 MOVE，不能让引擎看到滑动过程：实测 {@code DOWN} 后跟一次
+ * MOVE 再 {@code CANCEL} 撤不掉预编辑（候选栏仍在），只有"引擎只见过 DOWN"时
+ * {@code CANCEL} 才干净地把组合区还原成空白。
  *
  * <p>三段判定（位移按视图高度等比缩放，实测 909 高时 GATE=12px、FIRE=60px）：
  * <pre>
@@ -229,6 +244,7 @@ final class SlideHook {
         }
 
         if (action == ACTION_UP) {
+            cancelHandBack();
             Verdict verdict = GATE.onUp(y);
             if (verdict != Verdict.PASS) {
                 finish(param, x, y, time, verdict);
@@ -241,6 +257,14 @@ final class SlideHook {
             return;                         // 不是我们扣下的手势，一律放行
         }
         if (action == ACTION_LEAVE) {
+            if (GATE.handedBack()) {
+                // 这条 LEAVE 是引擎自己发的：它收到过我们归还的 DOWN，现在来收尾。
+                // 放行——引擎要看到它才画长按浮层的第二格（大写 / 字符 / 小写），
+                // 实测拦掉它就只剩中间那一个小气泡。
+                // 判定还欠一个 UP，所以不 reset：GATE.onEvent 已经处理过这条 LEAVE，
+                // 它在 handedBack 时只吞不清。
+                return;
+            }
             GESTURE.reset();                // 引擎没收到 DOWN，也不需要 LEAVE
         } else {
             GESTURE.recordMove(x, y, action, time);
@@ -283,7 +307,8 @@ final class SlideHook {
             return;                         // 未映射的键，引擎全看
         }
 
-        GESTURE.begin(handle, x, y, time, w, h, letter, action);
+        GESTURE.begin(view, handle, x, y, time, w, h, letter, action);
+        scheduleHandBack(view);
         if (Log.DEBUG) {
             Log.i("扣住 DOWN " + x + "," + y + " 字母=" + letter + " (" + w + "x" + h + ")");
         }
@@ -302,6 +327,7 @@ final class SlideHook {
     private static void finish(XC_MethodHook.MethodHookParam param,
                                int x, int y, long time, Verdict verdict) {
         Gesture g = GESTURE;
+        boolean handed = GATE.handedBack();
         param.setResult(null);              // 无论哪种结局，这一下 UP 都不交给引擎
 
         switch (verdict) {
@@ -312,7 +338,13 @@ final class SlideHook {
                 boolean ok = Actions.perform(g.action);
                 if (Log.DEBUG) {
                     Log.i("手势 " + g.letter + " -> " + g.action + " ok=" + ok
-                            + " dy=" + GATE.maxDy() + " (fire>" + GATE.fireAt() + ")");
+                            + " dy=" + GATE.maxDy() + " (fire>" + GATE.fireAt() + ")"
+                            + (handed ? " 归还后触发" : ""));
+                }
+                if (handed) {
+                    // 引擎收到过归还的 DOWN，组合区里正躺着这个字母。撤掉它，
+                    // 否则它会在下一次提交时一起进编辑框。
+                    revokeComposition(param, x, y, time, g);
                 }
                 break;
             }
@@ -322,12 +354,15 @@ final class SlideHook {
                     Log.i("手势作废：dy=" + GATE.maxDy() + " 在 " + GATE.gateAt()
                             + " 与 " + GATE.fireAt() + " 之间");
                 }
+                if (handed) {
+                    revokeComposition(param, x, y, time, g);
+                }
                 break;
             case REPLAY:
                 // 轻点、上滑、横滑、多指：按原坐标、原时间戳、原顺序整段送回，引擎照
                 // 它自己的规则处理。上滑输符号就是在这里恢复的；多指时位移归属不可信，
-                // 只能这样。
-                replayGesture(param, x, y, time, g);
+                // 只能这样。已经归还过的手势不再重发 DOWN——引擎手里已经有了。
+                replayGesture(param, x, y, time, g, !handed);
                 break;
             default:
                 break;
@@ -338,13 +373,108 @@ final class SlideHook {
     }
 
     /**
+     * 按住到点后把这一次按下补发给引擎，让它的 native 长按计时器启动。
+     *
+     * <p>为什么必须有定时器：手指不动时引擎不发任何事件（实测按住 700ms 只有
+     * DOWN 和 501ms 的 LEAVE），所以"按住够久"这件事只能在 DOWN 时预约，不能等事件。
+     *
+     * <p>时间基准不拿来比较：引擎给的事件时钟与本进程 {@code SystemClock} 不一定同源，
+     * 比较两者的差值会得到荒唐的结果。定时器负责时序，{@link GestureGate#onHandback()}
+     * 只负责"现在还该不该归还"。
+     */
+    private static void scheduleHandBack(final View view) {
+        final long handle = GESTURE.handle;
+        final int x0 = GESTURE.x0;
+        final int y0 = GESTURE.y0;
+        final long downTime = GESTURE.downTime;
+        final int generation = GESTURE.generation;
+        Runnable task = new Runnable() {
+            @Override
+            public void run() {
+                if (generation != GESTURE.generation) {
+                    return;                 // 这一下早就结束了，队列里剩的是旧任务
+                }
+                if (GATE.onHandback() != Verdict.HANDBACK) {
+                    return;                 // 已经在往下滑、或者多指：不归还
+                }
+                handBack(view, handle, x0, y0, downTime);
+            }
+        };
+        GESTURE.handBack = task;
+        view.postDelayed(task, GestureGate.HAND_BACK_MS);
+    }
+
+    /** 抬手时撤掉还没跑到的归还任务。 */
+    private static void cancelHandBack() {
+        Runnable task = GESTURE.handBack;
+        GESTURE.handBack = null;
+        View view = GESTURE.view;
+        if (task != null && view != null) {
+            view.removeCallbacks(task);
+        }
+    }
+
+    /**
+     * 把这一次按下补发给引擎。
+     *
+     * <p>带原始时间戳：引擎据此认为这一下已经按了很久，不必再等一个完整的计时周期。
+     */
+    private static void handBack(View view, long handle, int x0, int y0, long downTime) {
+        Method method = nativeTouch;
+        if (method == null) {
+            return;
+        }
+        REPLAYING.set(Boolean.TRUE);
+        try {
+            method.invoke(view, handle, x0, y0, ACTION_DOWN, downTime);
+            if (Log.DEBUG) {
+                Log.i("长按归还：" + GESTURE.letter + " 引擎开始长按计时");
+            }
+        } catch (Throwable t) {
+            Log.e("长按归还失败，这一下继续按原规则处理", t);
+        } finally {
+            REPLAYING.remove();
+        }
+    }
+
+    /**
+     * 撤回引擎里的预编辑。
+     *
+     * <p>归还过 DOWN 之后，引擎的组合区里已经有这个字母了。触发快捷键或明确作废时
+     * 必须把它撤掉，否则它会在下一次提交时跟着进编辑框（这是 v1 那个 `cq` 泄漏的
+     * 同类问题）。
+     *
+     * <p>只在"引擎只见过 DOWN"时可靠：实测 DOWN 后跟一次 MOVE 再 CANCEL，候选栏
+     * 不会回到空白。所以归还之后 MOVE 仍然扣住不转发。
+     */
+    private static void revokeComposition(XC_MethodHook.MethodHookParam param,
+                                          int x, int y, long time, Gesture g) {
+        Method method = nativeTouch;
+        if (method == null || !(param.thisObject instanceof View)) {
+            return;
+        }
+        View view = (View) param.thisObject;
+        REPLAYING.set(Boolean.TRUE);
+        try {
+            method.invoke(view, g.handle, x, y, ACTION_CANCEL, time);
+            if (Log.DEBUG) {
+                Log.i("撤回预编辑：" + g.letter + "（CANCEL）");
+            }
+        } catch (Throwable t) {
+            Log.e("撤回预编辑失败，字母可能留在引擎组合区", t);
+        } finally {
+            REPLAYING.remove();
+        }
+    }
+
+    /**
      * 把扣下的整段手势补发给引擎。
      *
      * <p>顺序、坐标、时间戳都保持用户真实输入的样子：引擎靠相邻 MOVE 算方向，
      * 只发 DOWN+UP 会让它把上滑看成点击。
      */
     private static void replayGesture(XC_MethodHook.MethodHookParam param,
-                                      int x, int y, long time, Gesture g) {
+                                      int x, int y, long time, Gesture g, boolean sendDown) {
         Method method = nativeTouch;
         if (method == null || !(param.thisObject instanceof View)) {
             // 没有补发通道，至少把字母提交出去，别让这次点击凭空消失。
@@ -354,17 +484,21 @@ final class SlideHook {
         View view = (View) param.thisObject;
 
         // 整段补发共用一个守卫：DOWN 与 MOVE 之间不能有"钩子重新武装"的窗口。
-        boolean downSent = false;
+        // 已经归还过的手势，引擎手里本来就有 DOWN，这里只补后半段。
+        boolean downSent = !sendDown;
         REPLAYING.set(Boolean.TRUE);
         try {
-            method.invoke(view, g.handle, g.x0, g.y0, ACTION_DOWN, g.downTime);
-            downSent = true;
+            if (sendDown) {
+                method.invoke(view, g.handle, g.x0, g.y0, ACTION_DOWN, g.downTime);
+                downSent = true;
+            }
             for (int i = 0; i < g.moveCount; i++) {
                 method.invoke(view, g.handle, g.moveX[i], g.moveY[i], g.moveAction[i], g.moveTime[i]);
             }
             method.invoke(view, g.handle, x, y, ACTION_UP, time);
             if (Log.DEBUG) {
-                Log.i("补发手势：" + g.letter + " moves=" + g.moveCount + " dy=" + (y - g.y0));
+                Log.i("补发手势：" + g.letter + " moves=" + g.moveCount + " dy=" + (y - g.y0)
+                        + (sendDown ? "" : " 后半段"));
             }
         } catch (Throwable t) {
             if (downSent) {
@@ -401,13 +535,25 @@ final class SlideHook {
         char letter;
         String action;
 
+        View view;
+        Runnable handBack;
+        /**
+         * 每按一次加一。队列里的旧归还任务靠它认出自己已经过期
+         * （上一段事件流丢了 UP 时，旧任务会晚一步跑到现在这一下上）。
+         */
+        int generation;
+
         int moveCount;
         final int[] moveX = new int[MAX_MOVES];
         final int[] moveY = new int[MAX_MOVES];
         final int[] moveAction = new int[MAX_MOVES];
         final long[] moveTime = new long[MAX_MOVES];
 
-        void begin(long handle, int x, int y, long time, int w, int h, char letter, String action) {
+        void begin(View view, long handle, int x, int y, long time, int w, int h,
+                   char letter, String action) {
+            this.view = view;
+            this.generation++;
+            this.handBack = null;
             this.handle = handle;
             this.downTime = time;
             this.x0 = x;
@@ -434,6 +580,7 @@ final class SlideHook {
             letter = 0;
             action = null;
             moveCount = 0;
+            handBack = null;
         }
     }
 }

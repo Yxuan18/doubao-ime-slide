@@ -45,24 +45,41 @@ adb shell su -c 'input swipe <x> <y1> <x> <y2> <duration_ms>'
 adb shell su -c 'grep -a DoubaoSlide /data/adb/lspd/log/modules_*.log | tail -20'
 ```
 
-### 调试规范：不看图
+### 调试规范：证据走文本，截屏走差分
 
-**不用 `screencap` / `screenrecord`，不生成、不打开、不分析截图，不把图片放进上下文。** 证据只走文本：模块日志、`logcat`、`dumpsys`、`uiautomator dump`、编译与测试结果。
+**默认不用 `screencap` / `screenrecord` 生成证据**，除非被测对象本身是渲染结果
+（native 自绘的浮层就是这种：`uiautomator dump` 的树里没有它，也不产生日志）。
+证据优先走文本：模块日志、`logcat`、`dumpsys`、`uiautomator dump`、编译与测试结果。
 
 | 要确认的事 | 纯文本怎么确认 |
 |---|---|
 | 这一下按到了哪个键 | `Log.DEBUG=true` 构建，读 `DOWN <x>,<y> view=<w>x<h> 字母=<c>` |
-| 手势被判成什么 | 读 `手势 c -> copy ok=true dy=…` / `手势作废：…` / `补发手势：…` |
-| 输入框里现在有什么字 | `adb shell uiautomator dump /sdcard/ui.xml` 后 grep 编辑框的 `text` |
+| 手势被判成什么 | 读 `手势 c -> copy ok=true dy=…` / `手势作废：…` / `补发手势：…` / `长按归还：…` / `撤回预编辑：…` |
+| 输入框里现在有什么字 | `adb shell uiautomator dump /sdcard/ui.xml` 后 grep 编辑框的 `text`（MIUI 笔记正文是 WebView，dump 不到；用**标题**那个原生 EditText） |
 | 当前输入法是哪个、在不在 | `adb shell su -c 'dumpsys input_method \| grep -m2 -e mCurId -e mCurMethodId'` |
 | 当前前台页面 | `adb shell su -c 'dumpsys activity \| grep -m1 mCurrentFocus'` |
 | 多指有没有被识别 | 有 `多指输入：本次手势不判快捷键`、且**没有** `手势 … -> …` |
+| 引擎的调用链差异 | 临时 hook `KeyboardView` 的方法（`onTouchEvent` / `preHandleTouchEvent` / `delaySendLongPressMessage` / `nativeTouch` / `drawTouchTipBubble`），打调用序列；查完删掉 |
 
-**做不到的要明说。** 触感反馈、选中高亮、候选栏长相、键位视觉对齐——这些是渲染结果，纯文本拿不到。它们不算已验收，写进 `ACCEPTANCE.md` 的受限项；不要为了"确认一下"退回截图。
+**必须用截屏时的取证方式**（2026-10-26 晚为长按浮层那条 bug 放开）：
+
+1. 同一构建、同一脚本、同一个键各拍「基准帧」和「按住中的帧」；
+2. `ffmpeg -i base.png -i target.png -filter_complex "[0:v][1:v]blend=all_mode=difference,format=gray,crop=1080:<h>:0:<y>,scale=<w>:<rows>"` 转灰度差分；
+3. 打印成 ASCII 折线，比对**形态**，不比对像素计数。
+
+**为什么强调形态而不是计数**：浮层里画着字母，`b` 和 `c` 的笔画数不同，同一个浮层的
+"变化像素数"会差一截——按计数判"弹框在不在"会得出假阴性。**裁剪窗口必须跟着被按的键走**：
+浮层出现在**被按键的正上方**，不是固定在候选栏。窗口选错会量到别的东西（组合预览气泡、
+候选栏文字、按键高亮），据此下的结论全是错的。
+
+**做不到的要明说。** 触感反馈、选中高亮、候选栏长相、键位视觉对齐——这些是渲染结果，
+差分折线也证不了"用户看到的样子对不对"，只证"形状对不对"。它们不算已验收，
+写进 `ACCEPTANCE.md` 的受限项。
 
 **闭环**：改代码 → 编译 → 安装 → 触发一次 → 读日志或控件树 → 下结论。满足验证条件就停手，不反复戳手机。
 
-> `ACCEPTANCE.md` 里 2026-10-26 之前的条目按当时的标准引用过截屏，保留不改；此后新增证据只用文本。
+> `ACCEPTANCE.md` 里 2026-10-26 之前的条目按当时的标准引用过截屏，保留不改；
+> 第 21 项起只用文本证据；第 26 项起（长按浮层）按上面的差分方式取证。
 
 `Log.DEBUG` 只在排障构建里设 `true`，**交付前必须改回 `false`**——否则每次触摸都往 LSPosed 日志里写几行。
 
@@ -86,11 +103,17 @@ maxDy > FIRE                      触发快捷键（带触感）
 向下 maxDy > GATE 且终点没回到起点上方   作废：不打字也不触发
 其余（轻点 / 上滑 / 横滑）              按原坐标、原时间戳、原顺序整段补发
 见过第二根手指（action=5）              跳过快捷键判定，整段补发
+按住 HAND_BACK_MS(300ms) 没滑过 FIRE    把这次按下归还给引擎，让长按浮层能画出来
 ```
 
 三条必须读懂的不变量：
 
-1. **引擎永远看不到被映射键的 DOWN。** 引擎收到 DOWN 就把字母塞进自己的预编辑缓冲，吞掉后续事件撤不回来（`getTextBeforeCursor()` 看不到这段引擎内组合，用错探针会假通过）。
+1. **引擎看不到被映射键的 DOWN——直到归还为止。** 引擎收到 DOWN 就把字母塞进自己的预编辑缓冲，吞掉后续事件撤不回来（`getTextBeforeCursor()` 看不到这段引擎内组合，用错探针会假通过）。
+   **例外**：按住 `HAND_BACK_MS`（300ms）还没滑过触发线时，把这一次按下补发给引擎，
+   引擎的组合区会多出这个字母，触发快捷键时要发一条 `CANCEL` 撤掉。
+   引擎的 native 长按浮层要画出来，需要同时看到 `nativeTouch(0)`（DOWN）和
+   `nativeTouch(-1)`（LEAVE）——两样都拦就只剩中间一个组合预览气泡。
+   所以归还之后**必须放行 LEAVE**，否则浮层画不出第二格。
 2. **补发必须整段，不能压平成 DOWN+UP。** 压平后引擎只能判成轻点，**上滑输符号会失效**——这是 `v1.0.0` 修掉的回退项，细节见 `ACCEPTANCE.md` 第 4 节。
 3. **反射调用 `nativeTouch` 会再次进入钩子。** 必须用 `ThreadLocal REPLAYING` 放行，否则补发的 DOWN 被自己再扣一次，死循环。
 

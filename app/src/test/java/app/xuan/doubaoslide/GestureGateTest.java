@@ -156,6 +156,95 @@ public class GestureGateTest {
         assertEquals(Verdict.PASS, gate.onUp(Y_C + 50));
     }
 
+    // ---------- 长按归还：用户报告的 bug（C/V 长按没有大小写弹框） ----------
+
+    @Test
+    public void longPressHandsBackToEngine() {
+        GestureGate gate = new GestureGate();
+        gate.onDown(Y_C, H, "copy");
+        // 定时器到点：按住够久又没下滑，把这次按下还给引擎，让它的长按计时器启动。
+        assertEquals(Verdict.HANDBACK, gate.onHandback());
+        assertTrue("归还之后仍然扣着事件，还欠一个 UP", gate.deferred());
+        assertTrue(gate.handedBack());
+    }
+
+    @Test
+    public void handbackHappensOnlyOnce() {
+        GestureGate gate = new GestureGate();
+        gate.onDown(Y_C, H, "copy");
+        assertEquals(Verdict.HANDBACK, gate.onHandback());
+        // 队列里可能还排着一个旧任务：不能再归还一次，否则引擎会看到两个 DOWN。
+        assertEquals(Verdict.PASS, gate.onHandback());
+    }
+
+    @Test
+    public void noHandbackOnceSliding() {
+        // 已经滑过触发线：这一下要走快捷键，不该惊动引擎。
+        GestureGate gate = new GestureGate();
+        gate.onDown(Y_C, H, "copy");
+        gate.onEvent(2, Y_C + 100);
+        assertEquals(Verdict.PASS, gate.onHandback());
+        assertFalse(gate.handedBack());
+    }
+
+    @Test
+    public void noHandbackForMultiPointer() {
+        GestureGate gate = new GestureGate();
+        gate.onDown(Y_C, H, "copy");
+        gate.onEvent(ACTION_POINTER_DOWN, Y_C);
+        assertEquals(Verdict.PASS, gate.onHandback());
+        assertFalse(gate.handedBack());
+    }
+
+    @Test
+    public void upAfterHandbackStillFires() {
+        // 用户明确要求：长按之后这一下仍要能当快捷键用。
+        GestureGate gate = new GestureGate();
+        gate.onDown(Y_C, H, "copy");
+        assertEquals(Verdict.HANDBACK, gate.onHandback());
+        assertEquals(Verdict.CAPTURE, gate.onEvent(2, Y_C + 70));
+        assertEquals(Verdict.FIRE, gate.onUp(Y_C + 120));
+        assertTrue("抬手时调用方要据此补发 CANCEL", gate.handedBack());
+    }
+
+    @Test
+    public void deadZoneAfterHandback() {
+        GestureGate gate = new GestureGate();
+        gate.onDown(Y_C, H, "copy");
+        assertEquals(Verdict.HANDBACK, gate.onHandback());
+        assertEquals(Verdict.DEAD, gate.onUp(Y_C + 35));
+    }
+
+    @Test
+    public void leaveAfterHandbackKeepsState() {
+        // 引擎收到归还的 DOWN 之后 501ms 会发自己的 LEAVE。吞掉它但不能清状态，
+        // 否则抬手时判定不出来。
+        GestureGate gate = new GestureGate();
+        gate.onDown(Y_C, H, "copy");
+        assertEquals(Verdict.HANDBACK, gate.onHandback());
+        assertEquals(Verdict.CAPTURE, gate.onEvent(ACTION_LEAVE, Y_C));
+        assertTrue("LEAVE 不能把归还后的判定状态清掉", gate.deferred());
+        assertEquals(Verdict.FIRE, gate.onUp(Y_C + 120));
+    }
+
+    @Test
+    public void tapBeforeHandbackReplays() {
+        GestureGate gate = new GestureGate();
+        gate.onDown(Y_C, H, "copy");
+        assertEquals(Verdict.REPLAY, gate.onUp(Y_C));
+        assertFalse(gate.handedBack());
+    }
+
+    @Test
+    public void resetClearsHandback() {
+        GestureGate gate = new GestureGate();
+        gate.onDown(Y_C, H, "copy");
+        gate.onHandback();
+        gate.reset();
+        assertFalse(gate.handedBack());
+        assertFalse(gate.deferred());
+    }
+
     @Test
     public void eventsWithoutDownPassThrough() {
         GestureGate gate = new GestureGate();
