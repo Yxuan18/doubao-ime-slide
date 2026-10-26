@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    LSPosed 模块清单。没有 Activity：这不是一个给人用的 App，只是一段注入代码。
+    LSPosed 从 meta-data 认出模块，从 assets/xposed_init 找到入口类。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application android:label="@string/app_name">
+
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+
+        <meta-data
+            android:name="xposeddescription"
+            android:value="豆包输入法：按住 26 键字母后下滑，执行快捷键。下滑 C 复制、V 粘贴、X 剪切、A 全选、Z 撤销。轻点仍然是正常打字。" />
+
+        <meta-data
+            android:name="xposedminversion"
+            android:value="82" />
+
+        <!-- 推荐作用域；最终以 LSPosed 里手动勾选为准 -->
+        <meta-data
+            android:name="xposedscope"
+            android:resource="@array/xposedscope" />
+
+    </application>
+
+</manifest>

@@ -1,0 +1,21 @@
+# Gradle
+.gradle/
+build/
+app/build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# 本机 SDK 路径，不进仓库
+local.properties
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# 签名材料
+*.jks
+*.keystore
+
+# 抓包/排障产物
+*.hprof
+captures/

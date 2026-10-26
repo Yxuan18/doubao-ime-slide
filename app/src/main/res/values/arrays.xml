@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">豆包下滑快捷键</string>
+
+    <string-array name="xposedscope">
+        <item>com.bytedance.android.doubaoime</item>
+    </string-array>
+</resources>
