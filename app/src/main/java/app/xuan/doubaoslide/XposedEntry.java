@@ -34,6 +34,9 @@ public final class XposedEntry implements IXposedHookLoadPackage {
         boolean slide;
         try {
             Log.always("注入 " + lpparam.processName + " pid=" + Process.myPid());
+            // 先把设置读进来，再记心跳：设置页靠心跳回答"模块到底有没有注入"。
+            Log.refresh();
+            Log.heartbeat(lpparam.processName);
             board = BoardGuard.install(lpparam.classLoader);
             slide = SlideHook.install(lpparam.classLoader);
         } catch (Throwable t) {

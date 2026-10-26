@@ -38,15 +38,16 @@ lane 配置在 `.claude/tdd-guardian/config.json`（门禁默认不自动拦截�
 每次手势测试先用 `Log.DEBUG=true` 构建，从 `DOWN <x>,<y> view=<w>x<h> 字母=<c>` 确认落键，
 再谈结果——候选栏出现时键盘在**屏幕上**的位置会变，屏幕坐标不能直接当视图坐标用。
 
-`Log.DEBUG` **当前固定为 `true`**（排障期，见 `Log.java` 的注释）。
+`Log.DEBUG` 是**运行时开关**：装完 APK 从桌面图标打开设置页拨一下，**下一次按键就生效，
+不需要重启输入法**。配置文件读不到时回落到 `Config.DEFAULT_DEBUG`——**发版前把它改成 `false`**，
+交付包默认应该是安静的。
 
-**待办**：把它做成"装完 APK 之后可运行时切换"——需要模块 App 进程与输入法进程的跨进程通信
-（编译期常量做不到；API 82 的 jar 里有 `XSharedPreferences` 可用）。**在这个开关落地之前，
-发版前必须手动改回 `false`**，否则交付包每次触摸都往 LSPosed 日志里写几行。
+它是 `volatile` 而不是 `static final`：编译期常量会被 javac 内联，取 `false` 时
+`if (Log.DEBUG)` 整块被删掉，运行时就再也打不开了。
 
 ## 架构
 
-七个类，边界别混：
+九个类，边界别混：
 
 | 类 | 职责 |
 |---|---|
@@ -56,7 +57,9 @@ lane 配置在 `.claude/tdd-guardian/config.json`（门禁默认不自动拦截�
 | `GestureGate` | 纯判定状态机（`PASS`/`CAPTURE`/`FIRE`/`DEAD`/`REPLAY`/`HANDBACK`），不碰反射与 `View`，JVM 可测 |
 | `SlideHook` | 反射调用 `nativeTouch`、扣事件、按判定结论补发；判定本身不在这里 |
 | `Actions` | 动作层：`InputConnection.performContextMenuAction`，copy/paste 有剪贴板兜底 |
-| `Log` | 日志出口：`i` 受 `DEBUG` 控制、`always` 生命周期、`once` 预期内失败只打一次、`e` 异常带堆栈 |
+| `Log` | 日志出口：`i` 受 `DEBUG` 控制、`always` 生命周期、`once` 预期内失败只打一次、`e` 异常带堆栈；`refresh()` 每根手指读一次配置，`heartbeat()` 供设置页显示注入状态 |
+| `Config` | 设置项的存储契约（prefs 名、键名、默认值）。模块 App 写、注入进程读，两端必须同名 |
+| `SettingsActivity` | 设置页：一个 DEBUG 开关 + 一屏诊断。跑在模块自己的进程里，不在豆包进程里 |
 
 `GestureGate` 的判定（`FIRE`=60px、`GATE`=12px，视图高 909 时）：
 

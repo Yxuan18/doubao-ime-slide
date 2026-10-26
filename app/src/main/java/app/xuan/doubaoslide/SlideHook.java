@@ -237,6 +237,11 @@ final class SlideHook {
     };
 
     private static void dispatch(XC_MethodHook.MethodHookParam param) {
+        // 每根手指只查一次配置有没有变（一次 stat）。放在这里是为了让下面那行
+        // DEBUG 事件日志也用上刚读到的值。
+        if (((Number) param.args[3]).intValue() == ACTION_DOWN) {
+            Log.refresh();
+        }
         long handle = ((Number) param.args[0]).longValue();
         int x = ((Number) param.args[1]).intValue();
         int y = ((Number) param.args[2]).intValue();

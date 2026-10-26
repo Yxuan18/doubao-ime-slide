@@ -5,6 +5,11 @@
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- targetSdk 30+ 的包可见性：不加这一段，设置页会显示"豆包输入法 未安装"。 -->
+    <queries>
+        <package android:name="com.bytedance.android.doubaoime" />
+    </queries>
+
     <application android:label="@string/app_name">
 
         <meta-data
@@ -19,10 +24,28 @@
             android:name="xposedminversion"
             android:value="82" />
 
+        <!-- 让 LSPosed 把本模块的 SharedPreferences 置为作用域都读得到。
+             没有这一行，豆包进程连文件都看不见（spike 基线：存在=false）。 -->
+        <meta-data
+            android:name="xposedsharedprefs"
+            android:value="true" />
+
         <!-- 推荐作用域；最终以 LSPosed 里手动勾选为准 -->
         <meta-data
             android:name="xposedscope"
             android:resource="@array/xposedscope" />
+
+        <!-- 设置页：装完 APK 后从桌面图标打开。它跑在模块自己的进程里，
+             写普通 SharedPreferences，由 LSPosed 重定向到与作用域共享的路径。 -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
 
     </application>
 

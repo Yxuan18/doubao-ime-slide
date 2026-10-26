@@ -30,6 +30,11 @@
 | 触发前字段干净 | 触发快捷键时，被映射字母不得留在字段的预编辑里（触发后候选栏须为空） | `CANCEL` 撤回语义的直接验收 |
 | 非映射键长按不受影响 | 未映射键 B 的长按浮层、符号、原生行为与装模块前一致 | 对照组 |
 | 长按浮层选中项一致 | 映射键 C 长按后提交，默认选中项与未映射键 B 相同（`#` 对 `？`） | 浮层不只是"出现"，还得能用 |
+| 开关即时生效 | 设置页拨动 DEBUG 后**不重启输入法**，下一次按键即按新值打日志：关→新增 0 行，开→每次固定的 5 行 | 用户要求：装完 APK 就能调，不再为改一个布尔值重装 |
+| 开关持久 | 冷启动（`am force-stop` + `ime set`）之后仍读到上次设置的值 | 输入法进程会被系统随时回收 |
+| 配置缺失回落 | 配置文件不存在或读不到时用 `Config.DEFAULT_DEBUG`，且输入法不崩、只打一条 `W` | 失败方向必须是"安静"，不是"崩" |
+| 写入后可读 | 设置页每次 `commit()` 之后把文件置为世界可读；不置时豆包进程读不到（spike 已证 0660 时 `可读=false`） | 跨 UID 读取的唯一障碍 |
+| 导出面不变 | 模块的导出组件只有设置页那一个 Activity，没有新增 provider / receiver / service | 不为一个日志开关换进新的攻击面 |
 
 ## 二、环境
 
@@ -38,7 +43,7 @@
 | 设备 | Xiaomi 23116PN5BC（小米 14 Pro） |
 | 系统 | Android 16 / API 36 |
 | 豆包输入法 | `com.bytedance.android.doubaoime` 1.5.3（versionCode 100503006） |
-| 模块 | `app.xuan.doubaoslide` 1.0.1（versionCode 2）。第 1–16 项在 1.0.0 上测；第 17–20 项在 1.0.1 上测；第 21–25 项在「1.0.1 + `GestureGate` 重构」上测 |
+| 模块 | `app.xuan.doubaoslide`。第 1–16 项在 1.0.0 上测；第 17–20 项在 1.0.1（versionCode 2）上测；第 21–25 项在「1.0.1 + `GestureGate` 重构」上测；第 26–36 项在 1.0.1 + 后续修复上测；第 37–42 项在 1.1.0（versionCode 3，含设置页）上测 |
 | LSPosed | 2.2.0-it（模块在管理器里带 “legacy” 标签） |
 | 键盘视图 | 1080×909，视图顶边在屏幕 y=1401 |
 
@@ -82,6 +87,12 @@
 | 34 | LEAVE 语义改动的回归矩阵 | 轻点→`补发手势 dy=0`；下滑 120px→`归还后触发`+`撤回预编辑`；长按 900ms→`补发手势 … 后半段`；长按 700ms 后下滑→`归还后触发`；死区 25px→`手势作废`+`撤回预编辑`；未映射键 B→无钩子行。六项与改前一致 | modules.log | A |
 | 35 | 长按浮层未被 LEAVE 改动破坏 | 映射键 C 长按 0.9s 的浮层差分折线与第 26 项逐行同形（三格） | 截屏差分折线 | A |
 | 36 | 交付前无异常/告警 | 上述全部用例跑完后，模块日志里 `E`/`W` 行数为 0；`logcat -b crash` 无 doubaoime 记录 | modules.log + logcat | A |
+| 37 | 跨 UID 读配置（spike） | 无 `xposedsharedprefs` 时豆包进程 `存在=false`（基线）；加上后路径重定向到 `/data/misc/apexdata/<id>/prefs/app.xuan.doubaoslide/`；文件 0660 时 `可读=false`，App `setReadable(true,false)` 后 `可读=true` 且值随写入变化 | modules.log 的 `SPIKE[…]` 行 | A |
+| 38 | 设置页写入生效 | 拨关：`settings.xml` 变 `false` 且权限 `-rw-rw-r--`；**不重启输入法**轻点一次，新增日志 0 行。拨开：同一进程轻点一次，恢复 5 行 | modules.log + 文件系统 | A |
+| 39 | 冷启动持久 | 设 `false` 后 `am force-stop` + `ime set`，重启后轻点仍是 0 行（只有 `always` 三行注入日志） | modules.log | A |
+| 40 | 配置缺失回落 | 删除 `settings.xml` 后轻点：回到默认值 `true`（有 DEBUG 行），`logcat -b crash` 无记录 | modules.log + logcat | A |
+| 41 | 导出面 | `dumpsys package app.xuan.doubaoslide` 只有一个组件：`SettingsActivity`（launcher filter），无 provider / receiver / service | dumpsys | A |
+| 42 | 诊断页内容 | 设置页显示：模块版本 1.1.0、豆包 1.5.3、文件里的值、配置文件绝对路径与状态、键盘进程心跳（含"共 4 个进程写过"） | `uiautomator dump` 读 Activity 的 TextView | A |
 
 ## 四、未达标与受限项
 
