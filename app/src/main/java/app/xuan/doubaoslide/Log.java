@@ -9,12 +9,17 @@ import de.robv.android.xposed.XposedBridge;
 /**
  * 模块日志。
  *
- * <p>逐手势日志默认关闭：键盘上的每个触摸都会走到这里，全打出来会淹掉 LSPosed 日志。
- * 排障时把 {@link #DEBUG} 改成 true 重新构建。安装成功那一行和所有异常始终输出。
+ * <p>逐手势日志受 {@link #DEBUG} 控制：键盘上的每个触摸都会走到这里，全打出来会淹掉
+ * LSPosed 日志。安装成功那一行和所有异常始终输出。
+ *
+ * <p><b>当前固定为 {@code true}</b>（排障期）。下一步要做成"装完 APK 之后可运行时切换"——
+ * 那需要模块 App 进程与输入法进程之间的跨进程通信，编译期常量做不到。
+ * 在开关落地之前，<b>发版前必须改回 {@code false}</b>，否则交付包每次触摸都往
+ * LSPosed 日志里写几行。
  */
 final class Log {
 
-    static final boolean DEBUG = false;
+    static final boolean DEBUG = true;
 
     private static final String TAG = "[DoubaoSlide] ";
 
