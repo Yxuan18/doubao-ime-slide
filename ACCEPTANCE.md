@@ -132,6 +132,14 @@
 - **界面好不好看没有验收线。** 第 42–44 项只能证「控件在、文案对、状态读得出来」，
   证不了「看起来不像模板」。配色、间距、字重靠截屏肉眼比对，没有可自动化的判据；
   换个系统主题或 MIUI 版本，观感会变，这一项不算已验收。
+- **日志里的 `ok=true` 不等于动作成功。** `Actions` 走的是
+  `InputConnection.performContextMenuAction`，AOSP 的实现（`EditableInputConnection`）
+  无条件 `return true`，`TextView.onTextContextMenuItem` 的 `ID_UNDO` 分支注释原文就是
+  "Returns true even if nothing was undone."（依据见 `doc/09` 第四节）。
+  所以第 27、28、30 项里 `copy ok=true` 这类判据只能证明「调用被受理」，真正的通过判据是
+  输入框文本或剪贴板内容变了没有。撤销（Z）尤其如此——豆包自己从不调这条通道，
+  它全源码只有三处 `performContextMenuAction`（两次 `selectAll`、一次 `paste`），
+  所以「撤销无效」不是兼容性问题，是这条 API 本来就没有保证。
 - **配置文件路径会在 UUID 中间换行。** 等宽字体在 12sp 下不按 `/` 断行，截图里路径
   断在 `…-ad1` / `b-4d84-…` 之间。只影响观感：长按全选复制拿到的是完整字符串，
   换行由 TextView 软换行产生，不进入文本。要修得自己写断行点，代价不划算。
