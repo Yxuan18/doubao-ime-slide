@@ -60,7 +60,8 @@ final class Geometry {
 
         switch (row) {
             case 0: {
-                int i = (int) (x / (w / 10f));
+                // 第 1 行每键 10 个权重；和下面两行一样用 unit 表达，别单独写 w/10f。
+                int i = (int) (x / (KEY_WEIGHT * unit));
                 return i >= 0 && i < ROW1.length() ? ROW1.charAt(i) : 0;
             }
             case 1: {

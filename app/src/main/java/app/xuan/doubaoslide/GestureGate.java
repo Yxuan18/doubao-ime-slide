@@ -100,21 +100,23 @@ final class GestureGate {
     /**
      * DOWN 与 UP 之外的事件：MOVE、第二根手指按下、离开键盘。
      *
-     * <p>返回 {@link Verdict#CAPTURE} 表示扣住；{@code ACTION_LEAVE} 也会返回 CAPTURE，
-     * 但它会把状态清空——调用方据此不要再记 MOVE。
+     * <p>返回 {@link Verdict#CAPTURE} 表示扣住，调用方据此不要把它记进补发缓冲。
+     *
+     * <p>{@code ACTION_LEAVE} 单独一条规则：<b>它永远不清判定状态</b>。扣住的手势里，
+     * 这条 LEAVE 由 Java 层 501ms 的计时器发出（{@code KeyboardView.delaySendLongPressMessage}），
+     * 与引擎是否见过 DOWN 无关，所以它对"这一下该怎么收尾"没有任何信息量；清掉状态
+     * 反而会让抬手时判不出来。实测反例：先滑过触发线、再停住、超过 501ms 才抬手，
+     * 清状态的那一版快捷键静默失效。
+     *
+     * <p>已归还时返回 {@link Verdict#PASS} 让引擎看到它——引擎要靠这条 LEAVE 画长按
+     * 浮层的第二格；未归还时吞掉（引擎根本没收到过 DOWN，没有东西可收尾）。
      */
     Verdict onEvent(int action, int y) {
         if (!deferred) {
             return Verdict.PASS;
         }
         if (action == ACTION_LEAVE) {
-            if (handedBack) {
-                // 这条 LEAVE 是引擎自己发的（它收到过我们归还的 DOWN）。吞掉但不清状态：
-                // 判定还欠一个 UP，清空了就没法在抬手时决定是触发还是补发。
-                return Verdict.CAPTURE;
-            }
-            reset();
-            return Verdict.CAPTURE;
+            return handedBack ? Verdict.PASS : Verdict.CAPTURE;
         }
         if (action == ACTION_POINTER_DOWN) {
             // 从这里开始坐标归属不可信，位移不再累计。

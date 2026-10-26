@@ -154,7 +154,12 @@ final class SlideHook {
 
         boolean serviceReady = hookImeService(classLoader);
 
-        Log.always("手势闸门就绪：C 复制 / V 粘贴 / X 剪切 / A 全选 / Z 撤销");
+        if (serviceReady) {
+            Log.always("手势闸门就绪：C 复制 / V 粘贴 / X 剪切 / A 全选 / Z 撤销");
+        } else {
+            // 手势能判、动作没通道：依旧是半装配，别让日志读起来像全好了。
+            Log.w("手势钩子已装，动作通道未接上：手势会被判出来，但快捷键不会执行");
+        }
         return serviceReady;
     }
 
@@ -218,9 +223,14 @@ final class SlideHook {
             try {
                 dispatch(param);
             } catch (Throwable t) {
-                // 处理失败就重置状态、把这一下交给引擎：宁可打出一个字母，
+                // 处理失败就把状态清干净、把这一下交给引擎：宁可打出一个字母，
                 // 也不要因为模块异常把用户的触摸吃掉。
+                // 三件缺一不可：不撤任务，排队的归还会用上一手势的坐标补发一次幽灵按住；
+                // 不重置 GATE，后续事件仍被当成"我们扣着的"；不重置 GESTURE，
+                // 补发缓冲还留着旧动作名，UP 时会把 null 动作送进动作层。
                 Log.e("手势处理异常，交回引擎", t);
+                cancelHandBack();
+                GATE.reset();
                 GESTURE.reset();
             }
         }
@@ -252,21 +262,15 @@ final class SlideHook {
             return;                         // PASS = 不是我们扣下的手势，原样放行
         }
 
+        // "该吞还是该放"只由 GestureGate 一处决定。这里不再自己判断 LEAVE，
+        // 否则判据会读到一个刚被自己改写的状态（那个写法曾让"先滑过触发线、
+        // 再停住"的手势静默失效）。
         Verdict verdict = GATE.onEvent(action, y);
         if (verdict == Verdict.PASS) {
-            return;                         // 不是我们扣下的手势，一律放行
+            return;                         // 不是我们扣下的手势（含已归还时的 LEAVE），一律放行
         }
-        if (action == ACTION_LEAVE) {
-            if (GATE.handedBack()) {
-                // 这条 LEAVE 是引擎自己发的：它收到过我们归还的 DOWN，现在来收尾。
-                // 放行——引擎要看到它才画长按浮层的第二格（大写 / 字符 / 小写），
-                // 实测拦掉它就只剩中间那一个小气泡。
-                // 判定还欠一个 UP，所以不 reset：GATE.onEvent 已经处理过这条 LEAVE，
-                // 它在 handedBack 时只吞不清。
-                return;
-            }
-            GESTURE.reset();                // 引擎没收到 DOWN，也不需要 LEAVE
-        } else {
+        // LEAVE 不进补发缓冲：它不是手指的位移，补发回去只会让引擎把它当成一次抖动。
+        if (action != ACTION_LEAVE) {
             GESTURE.recordMove(x, y, action, time);
             if (Log.DEBUG) {
                 Log.i("扣住 MOVE action=" + action + " " + x + "," + y);
@@ -307,7 +311,7 @@ final class SlideHook {
             return;                         // 未映射的键，引擎全看
         }
 
-        GESTURE.begin(view, handle, x, y, time, w, h, letter, action);
+        GESTURE.begin(view, handle, x, y, time, letter, action);
         scheduleHandBack(view);
         if (Log.DEBUG) {
             Log.i("扣住 DOWN " + x + "," + y + " 字母=" + letter + " (" + w + "x" + h + ")");
@@ -401,7 +405,10 @@ final class SlideHook {
             }
         };
         GESTURE.handBack = task;
-        view.postDelayed(task, GestureGate.HAND_BACK_MS);
+        if (!view.postDelayed(task, GestureGate.HAND_BACK_MS)) {
+            GESTURE.handBack = null;
+            Log.w("归还任务未能排队（视图可能已 detach），这次长按浮层不会出现");
+        }
     }
 
     /** 抬手时撤掉还没跑到的归还任务。 */
@@ -421,7 +428,8 @@ final class SlideHook {
      */
     private static void handBack(View view, long handle, int x0, int y0, long downTime) {
         Method method = nativeTouch;
-        if (method == null) {
+        if (method == null || view == null) {
+            // 反射目标与调用目标都先判空：这条红线不是形式主义，输入法崩一次的代价太高。
             return;
         }
         REPLAYING.set(Boolean.TRUE);
@@ -485,12 +493,14 @@ final class SlideHook {
 
         // 整段补发共用一个守卫：DOWN 与 MOVE 之间不能有"钩子重新武装"的窗口。
         // 已经归还过的手势，引擎手里本来就有 DOWN，这里只补后半段。
-        boolean downSent = !sendDown;
+        // 这个名字是"引擎是否已经有 DOWN"，不是"我们是否发出过 DOWN"——异常分支靠它
+        // 决定该不该直接提交字母，读反就会把字母提交两次。
+        boolean engineHasDown = !sendDown;
         REPLAYING.set(Boolean.TRUE);
         try {
             if (sendDown) {
                 method.invoke(view, g.handle, g.x0, g.y0, ACTION_DOWN, g.downTime);
-                downSent = true;
+                engineHasDown = true;
             }
             for (int i = 0; i < g.moveCount; i++) {
                 method.invoke(view, g.handle, g.moveX[i], g.moveY[i], g.moveAction[i], g.moveTime[i]);
@@ -501,7 +511,7 @@ final class SlideHook {
                         + (sendDown ? "" : " 后半段"));
             }
         } catch (Throwable t) {
-            if (downSent) {
+            if (engineHasDown) {
                 // DOWN 已送出而后续事件没送全，引擎里会残留一次按下。这里不再补别的事件
                 // （任何补偿都可能把字母提交两次），等下一次 DOWN 让它自己收尾。
                 Log.e("补发手势失败，引擎可能残留一次按下", t);
@@ -530,8 +540,6 @@ final class SlideHook {
         long downTime;
         int x0;
         int y0;
-        int w;
-        int h;
         char letter;
         String action;
 
@@ -549,7 +557,7 @@ final class SlideHook {
         final int[] moveAction = new int[MAX_MOVES];
         final long[] moveTime = new long[MAX_MOVES];
 
-        void begin(View view, long handle, int x, int y, long time, int w, int h,
+        void begin(View view, long handle, int x, int y, long time,
                    char letter, String action) {
             this.view = view;
             this.generation++;
@@ -558,8 +566,6 @@ final class SlideHook {
             this.downTime = time;
             this.x0 = x;
             this.y0 = y;
-            this.w = w;
-            this.h = h;
             this.letter = letter;
             this.action = action;
             this.moveCount = 0;
@@ -567,6 +573,9 @@ final class SlideHook {
 
         void recordMove(int x, int y, int action, long time) {
             if (moveCount >= MAX_MOVES) {
+                // 显式降级：丢掉的是补发轨迹的尾巴，引擎可能因此看不出方向。
+                Log.once("moves-overflow",
+                        "补发缓冲已满（" + MAX_MOVES + " 条），后续 MOVE 被丢弃；长手势的补发轨迹会不完整");
                 return;
             }
             moveX[moveCount] = x;
@@ -576,11 +585,22 @@ final class SlideHook {
             moveCount++;
         }
 
+        /**
+         * 清空这一份缓冲。
+         *
+         * <p>{@code generation++} 不是可选项：排队中的归还任务只靠"生成号没变"来判断
+         * 自己还属于当前手势。不递增，异常路径清完状态后旧任务照样会跑，用上一手势的
+         * 坐标补发一次用户没做过的按住。
+         *
+         * <p>{@code view = null} 顺手放掉静态字段对 {@code View} 的长期强引用。
+         */
         void reset() {
+            generation++;
             letter = 0;
             action = null;
             moveCount = 0;
             handBack = null;
+            view = null;
         }
     }
 }

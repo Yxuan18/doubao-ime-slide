@@ -94,6 +94,10 @@ final class BoardGuard {
         Object target = instance;
         Method method = getCurrentKbdType;
         if (target == null || method == null) {
+            // 静默返回 false 会让"装上了但按键没反应"完全无线索：日志里只有注入行，
+            // 分不清是没装上、还是装上了没拿到引擎实例。这里补一条只打一次的线索。
+            Log.once("board-guard",
+                    "还没拿到 KeyboardJni 实例，本次触摸不武装（装了模块但按键没反应时看这条）");
             return false;
         }
         try {

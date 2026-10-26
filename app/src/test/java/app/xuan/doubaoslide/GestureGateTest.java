@@ -120,6 +120,24 @@ public class GestureGateTest {
         assertEquals(Verdict.DEAD, gate.onUp(Y_C + 5));
     }
 
+    @Test
+    public void returningAboveTheOriginByMoreThanGateReplays() {
+        GestureGate gate = new GestureGate();
+        gate.onDown(Y_C, H, "copy");
+        gate.onEvent(2, Y_C + 40);              // 下探 40（死区内）
+        // 停在起点上方 13px：超过 gateAt，算"往上走了"，按轻点/上滑补发
+        assertEquals(Verdict.REPLAY, gate.onUp(Y_C - 13));
+    }
+
+    @Test
+    public void returningJustAboveTheOriginStaysDead() {
+        GestureGate gate = new GestureGate();
+        gate.onDown(Y_C, H, "copy");
+        gate.onEvent(2, Y_C + 40);
+        // 停在起点上方 12px：刚好卡在 gateAt 边界，仍算"没离开死区"
+        assertEquals(Verdict.DEAD, gate.onUp(Y_C - 12));
+    }
+
     // ---------- 多指：v1.0.0 的回归用例 ----------
 
     @Test
@@ -146,14 +164,27 @@ public class GestureGateTest {
     // ---------- 状态复位 ----------
 
     @Test
-    public void leaveClearsStateAndGuards() {
+    public void leaveWithoutHandbackSwallowsButKeepsState() {
+        // 扣住的手势里，这条 LEAVE 由 Java 层 501ms 的计时器发出，与引擎是否见过 DOWN
+        // 无关。它不能清掉判定状态，否则抬手时判不出来该触发还是补发（见下面那条回归）。
         GestureGate gate = new GestureGate();
         gate.onDown(Y_C, H, "copy");
+        assertEquals("引擎没见过 DOWN，这条 LEAVE 要吞掉", Verdict.CAPTURE,
+                gate.onEvent(ACTION_LEAVE, Y_C));
+        assertTrue("LEAVE 不能把判定状态清掉", gate.deferred());
+        // 轻点：抬手时仍然按原规则补发
+        assertEquals(Verdict.REPLAY, gate.onUp(Y_C));
+    }
+
+    @Test
+    public void leaveAfterSlidingPastFireKeepsState() {
+        // 回归：先滑过触发线、再停住、超过引擎 501ms 的 LEAVE 才抬手。
+        // 改之前 LEAVE 会 reset()，抬手被判成"不是我们扣下的手势"，快捷键静默失效。
+        GestureGate gate = new GestureGate();
+        gate.onDown(Y_C, H, "copy");
+        assertEquals(Verdict.CAPTURE, gate.onEvent(2, Y_C + 100));
         assertEquals(Verdict.CAPTURE, gate.onEvent(ACTION_LEAVE, Y_C));
-        assertFalse("离开键盘后不能再扣事件", gate.deferred());
-        // 后续事件一律放行
-        assertEquals(Verdict.PASS, gate.onEvent(2, Y_C + 50));
-        assertEquals(Verdict.PASS, gate.onUp(Y_C + 50));
+        assertEquals("LEAVE 之后抬手仍要触发快捷键", Verdict.FIRE, gate.onUp(Y_C + 120));
     }
 
     // ---------- 长按归还：用户报告的 bug（C/V 长按没有大小写弹框） ----------
@@ -216,13 +247,15 @@ public class GestureGateTest {
     }
 
     @Test
-    public void leaveAfterHandbackKeepsState() {
-        // 引擎收到归还的 DOWN 之后 501ms 会发自己的 LEAVE。吞掉它但不能清状态，
-        // 否则抬手时判定不出来。
+    public void leaveAfterHandbackPassesThroughButKeepsState() {
+        // 引擎收到归还的 DOWN 之后 501ms 会发自己的 LEAVE。
+        // 放行：引擎要靠它画长按浮层的第二格（大写 / 字符 / 小写）。
+        // 但状态不能清，否则抬手时判定不出来。
         GestureGate gate = new GestureGate();
         gate.onDown(Y_C, H, "copy");
         assertEquals(Verdict.HANDBACK, gate.onHandback());
-        assertEquals(Verdict.CAPTURE, gate.onEvent(ACTION_LEAVE, Y_C));
+        assertEquals("归还后这条 LEAVE 要交给引擎", Verdict.PASS,
+                gate.onEvent(ACTION_LEAVE, Y_C));
         assertTrue("LEAVE 不能把归还后的判定状态清掉", gate.deferred());
         assertEquals(Verdict.FIRE, gate.onUp(Y_C + 120));
     }

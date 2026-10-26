@@ -9,7 +9,6 @@ import android.view.View;
 import android.view.inputmethod.InputConnection;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,11 +27,15 @@ import de.robv.android.xposed.XposedHelpers;
  */
 final class Actions {
 
-    /** 豆包会同时留不止一个 ImeService，只有被绑定的那个有输入连接（实测），所以都留着挨个问。 */
-    private static final List<Object> SERVICES =
-            Collections.synchronizedList(new ArrayList<Object>(4));
-
     private static final int MAX_SERVICES = 4;
+
+    /**
+     * 豆包会同时留不止一个 ImeService，只有被绑定的那个有输入连接（实测），所以都留着挨个问。
+     *
+     * <p>普通 {@code ArrayList} + 每次访问显式加锁：原来还套了一层
+     * {@code Collections.synchronizedList}，两种惯用法并存，读的人得先判断哪个在起作用。
+     */
+    private static final List<Object> SERVICES = new ArrayList<Object>(MAX_SERVICES);
 
     private static final Map<String, Integer> RES_IDS = new HashMap<String, Integer>();
 
@@ -53,8 +56,36 @@ final class Actions {
             }
             SERVICES.add(service);
             while (SERVICES.size() > MAX_SERVICES) {
-                SERVICES.remove(0);
+                evictOne();
             }
+        }
+    }
+
+    /**
+     * 淘汰一个实例。
+     *
+     * <p>优先淘汰拿不到输入连接的那个——被绑定的那个要是恰好最旧，按 FIFO 直接
+     * {@code remove(0)} 会把它踢掉，之后所有快捷键都失效。全都拿得到（或探测失败）时退回最旧的。
+     *
+     * <p>探测会调进 IME 对象里，所以整段兜住异常：这里抛出去会经过构造函数的钩子，
+     * 直接打断输入法的初始化。
+     */
+    private static void evictOne() {
+        for (Object candidate : new ArrayList<Object>(SERVICES)) {
+            if (!hasConnection(candidate)) {
+                SERVICES.remove(candidate);
+                return;
+            }
+        }
+        SERVICES.remove(0);
+    }
+
+    private static boolean hasConnection(Object service) {
+        try {
+            return XposedHelpers.callMethod(service, "getCurrentInputConnection")
+                    instanceof InputConnection;
+        } catch (Throwable t) {
+            return false;                   // 探测失败就当它没连接，可以淘汰
         }
     }
 
@@ -72,7 +103,10 @@ final class Actions {
                 }
             } catch (Throwable t) {
                 // 某个实例拿不到连接是常态（未被绑定），继续问下一个。
-                if (Log.DEBUG) Log.i("getCurrentInputConnection 失败：" + t);
+                // 用 once 而不是逐次：每次手势都会走到这里，逐次打会把日志淹掉；
+                // 一次不打又等于空 catch。按实例类型分开去重，一个坏实例压不掉另一个。
+                Log.once("ic-" + service.getClass().getName(),
+                        "getCurrentInputConnection 失败：" + t);
             }
         }
         return null;
@@ -95,6 +129,11 @@ final class Actions {
 
     /** @return 动作是否执行成功；失败时已经尝试过兜底通道。 */
     static boolean perform(String action) {
+        if (action == null) {
+            // 正常路径不会走到这里；异常残局下 finish() 可能带着 null 动作名下来。
+            Log.w("没有动作名，本次快捷键不执行");
+            return false;
+        }
         InputConnection ic = connection();
         if (ic == null) {
             Log.w("没有输入连接，" + action + " 未执行");
@@ -112,7 +151,7 @@ final class Actions {
     private static boolean contextMenuAction(InputConnection ic, String name) {
         int id = resId(name);
         if (id <= 0) {
-            Log.w("找不到资源 id：" + name);
+            Log.once("resid-" + name, "找不到资源 id：" + name + "，该动作不可用");
             return false;
         }
         try {
@@ -184,6 +223,11 @@ final class Actions {
      * <p>只在补发 DOWN 就没送出去时调用——那时引擎什么都没收到，提交一个字母不会重复。
      */
     static void commitLetter(char letter) {
+        if (letter == 0) {
+            // 异常残局下 letter 可能已经被清成 0；提交一个 NUL 字符比什么都不做更糟。
+            Log.w("没有字母可提交，跳过");
+            return;
+        }
         InputConnection ic = connection();
         if (ic == null) {
             Log.w("补发失败且没有输入连接，字母 '" + letter + "' 丢失");
@@ -206,8 +250,9 @@ final class Actions {
                     HapticFeedbackConstants.KEYBOARD_TAP,
                     HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
         } catch (Throwable t) {
-            // 部分机型不支持触感反馈，忽略。
-            if (Log.DEBUG) Log.i("触感反馈不可用：" + t);
+            // 部分机型不支持触感反馈，忽略——但留一行只打一次的记录，
+            // 否则交付构建里这就是一个空 catch。
+            Log.once("haptic", "触感反馈不可用：" + t);
         }
     }
 

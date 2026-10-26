@@ -31,12 +31,14 @@ adb shell su -c 'grep -a DoubaoSlide /data/adb/lspd/log/modules_*.log | tail -5'
 
 **手势行为没有自动化测试，也没接 CI。** 唯一验收是真机手势 + 模块日志 + 控件树，结论和证据等级写进 `ACCEPTANCE.md`。改任何手势行为，都在那里补一行实测记录。
 
-纯 JVM 的判定与几何有单元测试：`app/src/test/java/app/xuan/doubaoslide/`（`GestureGateTest` 16 项 +
+纯 JVM 的判定与几何有单元测试：`app/src/test/java/app/xuan/doubaoslide/`（`GestureGateTest` 28 项 +
 `GeometryTest` 11 项），跑 `./gradlew :app:testDebugUnitTest`。它们锁两件事——五段判定（含多指、
 死区、阈值边界）和真机实测过的坐标命中；**不覆盖**候选栏位移、反射、`InputConnection`，
 所以绿了也不代表手势对。lane 配置在 `.claude/tdd-guardian/config.json`（门禁默认不自动拦截）。
 
-标定铁律，违反它会得到完全错误的结论：**候选栏/组合区一出现，整块键盘会整体上移并改变键宽**，同一个屏幕坐标会落到另一个键上。每次手势测试先用 `Log.DEBUG=true` 构建，从 `DOWN <x>,<y> view=<w>x<h> 字母=<c>` 这一行确认落键，再谈结果。
+标定铁律：**每次手势测试先用 `Log.DEBUG=true` 构建，从 `DOWN <x>,<y> view=<w>x<h> 字母=<c>` 这一行确认落键，再谈结果。**
+
+为什么不能省这一步：候选栏/工具条出现时键盘在**屏幕上**的位置会变，屏幕坐标不能直接当视图坐标用；`nativeTouch` 收的是视图局部坐标（本机视图 1080×909、顶边在屏幕 y=1401）。视图内部布局的实测结论见 `ACCEPTANCE.md` 第七节——2026-10-26 的复测里，带与不带候选栏都是 `view=1080x909` 且 `字母=c` 不变，所以别把"整体上移并改变键宽"当成既定事实，**以日志里那一行为准**。
 
 ```bash
 # 测试手势（需 root）
@@ -85,16 +87,17 @@ adb shell su -c 'grep -a DoubaoSlide /data/adb/lspd/log/modules_*.log | tail -20
 
 ## 架构
 
-六个类，边界别混：
+七个类，边界别混：
 
 | 类 | 职责 |
 |---|---|
 | `XposedEntry` | 按包名注入；不是目标包直接 return；`System.setProperty` 做跨 ClassLoader 去重；装配不完整时打警告 |
 | `BoardGuard` | 棋盘守卫：`KeyboardJni.getCurrentKbdType()` 只认 `0`(拼音 26) / `2`(英文 26)，其余棋盘一律不武装 |
 | `Geometry` | 比例化键位模型（按视图高度缩放），坐标 → 字母 |
-| `GestureGate` | 纯判定状态机（`PASS`/`CAPTURE`/`FIRE`/`DEAD`/`REPLAY`），不碰反射与 `View`，JVM 可测 |
+| `GestureGate` | 纯判定状态机（`PASS`/`CAPTURE`/`FIRE`/`DEAD`/`REPLAY`/`HANDBACK`），不碰反射与 `View`，JVM 可测 |
 | `SlideHook` | 反射调用 `nativeTouch`、扣事件、按判定结论补发；判定本身不在这里 |
 | `Actions` | 动作层：`InputConnection.performContextMenuAction`，copy/paste 有剪贴板兜底 |
+| `Log` | 日志出口：`i` 受 `DEBUG` 控制、`always` 生命周期、`once` 预期内失败的只打一次、`e` 异常带堆栈 |
 
 `GestureGate` 的判定（`FIRE`=60px、`GATE`=12px，视图高 909 时）：
 
@@ -104,6 +107,8 @@ maxDy > FIRE                      触发快捷键（带触感）
 其余（轻点 / 上滑 / 横滑）              按原坐标、原时间戳、原顺序整段补发
 见过第二根手指（action=5）              跳过快捷键判定，整段补发
 按住 HAND_BACK_MS(300ms) 没滑过 FIRE    把这次按下归还给引擎，让长按浮层能画出来
+引擎发来 LEAVE(-1)                     永远不清判定状态；已归还时放行（引擎要靠它画浮层第二格），
+                                      未归还时吞掉
 ```
 
 三条必须读懂的不变量：
@@ -114,6 +119,9 @@ maxDy > FIRE                      触发快捷键（带触感）
    引擎的 native 长按浮层要画出来，需要同时看到 `nativeTouch(0)`（DOWN）和
    `nativeTouch(-1)`（LEAVE）——两样都拦就只剩中间一个组合预览气泡。
    所以归还之后**必须放行 LEAVE**，否则浮层画不出第二格。
+   反过来，**未归还时 LEAVE 必须吞掉、且不能清判定状态**——那条 LEAVE 是 Java 层
+   501ms 计时器发的，与引擎是否见过 DOWN 无关；用它清状态会让"先滑过触发线、
+   再停住"的手势静默失效（2026-10-26 复审发现并修掉）。
 2. **补发必须整段，不能压平成 DOWN+UP。** 压平后引擎只能判成轻点，**上滑输符号会失效**——这是 `v1.0.0` 修掉的回退项，细节见 `ACCEPTANCE.md` 第 4 节。
 3. **反射调用 `nativeTouch` 会再次进入钩子。** 必须用 `ThreadLocal REPLAYING` 放行，否则补发的 DOWN 被自己再扣一次，死循环。
 
