@@ -23,9 +23,13 @@ import java.util.Locale;
 /**
  * 设置页：一个运行时开关 + 一屏诊断。
  *
- * <p><b>界面原则</b>：跟随系统主题取色（不自己发明配色），只用一个字号阶梯和一条
- * 发丝线做层次，不堆卡片、阴影、图标。开关用平台控件，字体用系统字体——这样在
- * MIUI 上看起来像系统自带设置，而不是一个外挂 App。
+ * <p><b>界面原则</b>：整页只在回答两件事——「怎么设」和「现在成不成」。上半是开关，
+ * 一条线之后是状态句与详情。状态句排在第一个：这一页真正的问题是"注入成功了吗"，
+ * 不该埋在版本号和路径后面。
+ *
+ * <p>颜色跟系统主题走，不自己发明配色；全页只有一个彩色元素（开关轨道）。
+ * 规则线只画在"换了一件事说"的地方，不逐行画。等宽字体只给需要字符对齐的数据
+ * （路径、pid、时间），版本号和大白话用系统字族。
  *
  * <p>这个 Activity 跑在**模块自己的进程**里，不在豆包进程里。它写的是普通
  * {@code SharedPreferences}，由 LSPosed 重定向到与作用域共享的路径——见 {@link Config}。
@@ -45,7 +49,8 @@ public class SettingsActivity extends Activity {
     private int colorDivider;
 
     private Switch debugSwitch;
-    private LinearLayout diagnosticRows;
+    private TextView statusView;
+    private LinearLayout detailRows;
 
     /** 程序化 setChecked 会触发监听器，用这个标记把「回填」和「用户操作」分开。 */
     private boolean binding;
@@ -103,35 +108,37 @@ public class SettingsActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         int side = dp(24);
-        root.setPadding(side, dp(28), side, dp(32));
+        root.setPadding(side, dp(28), side, dp(36));
 
-        // 标题
-        TextView title = text(getString(R.string.app_name), 26, colorPrimary);
+        TextView title = text(getString(R.string.app_name), 24, colorPrimary);
         title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         root.addView(title);
 
-        TextView subtitle = text("按住字母下滑，执行复制 / 粘贴 / 剪切 / 全选 / 撤销", 13, colorSecondary);
-        root.addView(subtitle, paramsTop(dp(6)));
+        TextView subtitle = text("按住字母下滑，执行复制、粘贴、剪切、全选、撤销。", 14, colorSecondary);
+        subtitle.setLineSpacing(dp(2), 1f);
+        root.addView(subtitle, paramsTop(dp(8)));
 
-        // 日志
-        root.addView(sectionLabel("日志"), paramsTop(dp(36)));
-        root.addView(buildSwitchRow(), paramsTop(dp(4)));
-        root.addView(hairline(), hairlineParams(dp(16), 0));
+        root.addView(buildSwitchRow(), paramsTop(dp(22)));
 
-        // 诊断
-        root.addView(sectionLabel("诊断"), paramsTop(dp(28)));
-        diagnosticRows = new LinearLayout(this);
-        diagnosticRows.setOrientation(LinearLayout.VERTICAL);
-        root.addView(diagnosticRows, paramsTop(dp(4)));
+        // 这条线分开两件事：上面是"怎么设"，下面是"现在怎么样"。
+        root.addView(hairline(), hairlineParams(dp(18), 0));
 
-        // 脚注
-        root.addView(hairline(), hairlineParams(dp(12), 0));
+        // 状态句。整页真正的问题是"注入成功了吗"，所以它排在第一个。
+        statusView = text("", 15, colorPrimary);
+        statusView.setLineSpacing(dp(5), 1f);
+        root.addView(statusView, paramsTop(dp(18)));
+
+        detailRows = new LinearLayout(this);
+        detailRows.setOrientation(LinearLayout.VERTICAL);
+        root.addView(detailRows, paramsTop(dp(10)));
+
+        root.addView(hairline(), hairlineParams(dp(22), 0));
         TextView note = text(
-                "诊断值由输入法进程写进共享目录，仅供排障参考，不具安全性。"
-                        + "若「键盘进程」一直为空，说明模块没有注入到豆包——先去看 LSPosed 的日志。",
+                "这些值由输入法进程写进共享目录，仅供排障。"
+                        + "「配置文件」显示“读不到”时，设置写进去了、键盘读不出来。",
                 12, colorSecondary);
         note.setLineSpacing(dp(3), 1f);
-        root.addView(note, paramsTop(dp(14)));
+        root.addView(note, paramsTop(dp(12)));
 
         scroll.addView(root, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -142,14 +149,14 @@ public class SettingsActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(0, dp(10), 0, dp(10));
-        row.setMinimumHeight(dp(56));
+        row.setPadding(0, dp(8), 0, dp(8));
+        row.setMinimumHeight(dp(52));
 
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
-        col.addView(text("详细日志", 16, colorPrimary));
+        col.addView(text("详细日志", 15, colorPrimary));
 
-        TextView desc = text("每次按键都写入 LSPosed 日志。改完立刻生效，不需要重启输入法。",
+        TextView desc = text("每次按键都写入 LSPosed 日志。改完立刻生效，不用重启输入法。",
                 13, colorSecondary);
         desc.setLineSpacing(dp(2), 1f);
         col.addView(desc, paramsTop(dp(3)));
@@ -193,13 +200,6 @@ public class SettingsActivity extends Activity {
             }
         });
         return row;
-    }
-
-    private TextView sectionLabel(String s) {
-        TextView tv = text(s, 12, colorSecondary);
-        tv.setLetterSpacing(0.08f);
-        tv.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        return tv;
     }
 
     /** 发丝线。高度必须是固定值——用 WRAP_CONTENT 会被撑满整屏。 */
@@ -306,55 +306,75 @@ public class SettingsActivity extends Activity {
     // ------------------------------------------------------------------ 诊断
 
     private void refreshDiagnostics() {
-        if (diagnosticRows == null) {
+        if (detailRows == null) {
             return;
         }
-        diagnosticRows.removeAllViews();
-
-        boolean stored = prefs.contains(Config.KEY_DEBUG);
-        boolean value = prefs.getBoolean(Config.KEY_DEBUG, Config.DEFAULT_DEBUG);
-
-        addRow("模块版本", versionOf(getPackageName()));
-        addRow("豆包输入法", versionOf(IME_PKG) == null ? "未安装" : versionOf(IME_PKG));
-        addRow("当前值", (value ? "开" : "关")
-                + (stored ? " · 已保存" : " · 默认（尚未设置）"));
+        detailRows.removeAllViews();
 
         File f = prefsFile();
-        String state;
-        if (f == null) {
-            state = "未知";
-        } else if (!f.exists()) {
-            state = "尚未写入，当前用默认值";
-        } else {
-            state = f.canRead() ? "可读" : "读不到";
-        }
-        addRow("配置文件", f == null ? state : f.getAbsolutePath() + "\n" + state);
+        boolean stored = prefs.contains(Config.KEY_DEBUG);
+        boolean value = prefs.getBoolean(Config.KEY_DEBUG, Config.DEFAULT_DEBUG);
+        Heartbeat hb = readHeartbeat(f);
 
-        addRow("键盘进程", heartbeatSummary(f));
+        statusView.setText(statusSentence(hb));
+        // 没注入时这句要弱下来，别让人以为出现了错误；注入成功才是正文色。
+        statusView.setTextColor(hb.found ? colorPrimary : colorSecondary);
+
+        addRow("模块", versionOf(getPackageName()), false);
+        String ime = versionOf(IME_PKG);
+        addRow("豆包输入法", ime == null ? "未安装" : ime, false);
+        addRow("当前值", stored ? (value ? "开，已保存" : "关，已保存")
+                : "还没写入过，用的是默认值", false);
+        addRow("配置文件", configState(f), true);
+        addRow("键盘进程", hb.detail, true);
     }
 
-    private void addRow(String label, String value) {
+    /**
+     * 页面最上面那句话：模块现在到底在不在键盘里。
+     *
+     * <p>两种失败各说各的话：完全没注入，和注入了但配置文件读不到。后者更隐蔽——
+     * 开关看起来拨了，键盘那边收不到。
+     */
+    private String statusSentence(Heartbeat hb) {
+        if (!hb.found) {
+            return "还没有记录到模块注入键盘进程。在 LSPosed 里启用本模块、"
+                    + "作用域勾上「豆包输入法」，然后重启一次输入法。";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("模块已注入键盘进程，最后一次是 ").append(hb.ageText).append("。");
+        if (!hb.configReadable) {
+            sb.append("\n但配置文件读不到——开关改了也传不过去。");
+        }
+        return sb.toString();
+    }
+
+    private String configState(File f) {
+        if (f == null) {
+            return "未知";
+        }
+        String state = !f.exists() ? "尚未写入，当前用默认值" : (f.canRead() ? "可读" : "读不到");
+        return f.getAbsolutePath() + "\n" + state;
+    }
+
+    private void addRow(String label, String value, boolean mono) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setPadding(0, dp(10), 0, dp(10));
-
-        // 只在行与行之间画线，最后一行下面不留悬空的线
-        if (diagnosticRows.getChildCount() > 0) {
-            diagnosticRows.addView(hairline(), hairlineParams(0, dp(88)));
-        }
+        row.setPadding(0, dp(7), 0, dp(7));
 
         TextView l = text(label, 13, colorSecondary);
         l.setWidth(dp(88));
         l.setPadding(0, dp(1), dp(8), 0);
         row.addView(l);
 
-        TextView v = text(value, 13, colorPrimary);
-        v.setTypeface(Typeface.MONOSPACE);
-        v.setTextIsSelectable(true);
+        TextView v = text(value, mono ? 12 : 13, mono ? colorSecondary : colorPrimary);
+        if (mono) {
+            v.setTypeface(Typeface.MONOSPACE);
+            v.setTextIsSelectable(true);
+        }
         v.setLineSpacing(dp(3), 1f);
         row.addView(v, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
-        diagnosticRows.addView(row);
+        detailRows.addView(row);
     }
 
     private String versionOf(String pkg) {
@@ -367,24 +387,38 @@ public class SettingsActivity extends Activity {
         }
     }
 
+    /** 心跳文件里读到的东西，全部翻译成页面能直接用的说法。 */
+    private static final class Heartbeat {
+        /** 找到键盘主进程那一行。心跳只在注入时写一次，所以"有这一行"≈"注入过"。 */
+        boolean found;
+        String ageText = "未知时间";
+        String detail = "无记录（模块可能还没注入过）";
+        /** 配置文件此刻读不读得到。两种失败要在状态句里说成不同的话。 */
+        boolean configReadable;
+    }
+
     /**
-     * 心跳摘要。
+     * 读心跳。
      *
      * <p>四个进程（主进程、{@code :upgrade}、{@code :push}、{@code :sandboxed_process0}）
-     * 都会往同一个文件追加，所以"最后一行"经常是无关的子进程。这里优先找**键盘所在的
-     * 主进程**，再把其它进程的数量报出来。
+     * 都会往同一个文件追加，所以"最后一行"经常是无关的子进程。这里只认**键盘所在的
+     * 主进程**那一行，其它进程只报个数。
      */
-    private String heartbeatSummary(File prefsFile) {
+    private Heartbeat readHeartbeat(File prefsFile) {
+        Heartbeat hb = new Heartbeat();
         if (prefsFile == null) {
-            return "未知";
+            hb.detail = "未知";
+            return hb;
         }
-        File hb = new File(prefsFile.getParentFile(), Config.HEARTBEAT);
-        if (!hb.exists() || hb.length() == 0) {
-            return "无记录（模块可能还没注入过）";
+        hb.configReadable = prefsFile.exists() && prefsFile.canRead();
+
+        File file = new File(prefsFile.getParentFile(), Config.HEARTBEAT);
+        if (!file.exists() || file.length() == 0) {
+            return hb;
         }
         try {
-            RandomAccessFile raf = new RandomAccessFile(hb, "r");
             String content;
+            RandomAccessFile raf = new RandomAccessFile(file, "r");
             try {
                 long len = raf.length();
                 long start = Math.max(0, len - 4096);
@@ -397,47 +431,70 @@ public class SettingsActivity extends Activity {
             }
 
             String main = null;
-            String last = null;
             java.util.Set<String> procs = new java.util.HashSet<String>();
             for (String line : content.split("\\n")) {
                 String s = line.trim();
                 if (s.isEmpty()) {
                     continue;
                 }
-                last = s;
                 String[] parts = s.split(" ", 3);
-                if (parts.length >= 2) {
-                    procs.add(parts[1]);
-                    if (IME_PKG.equals(parts[1])) {
-                        main = s;               // 主进程：键盘在这里
-                    }
+                if (parts.length < 2) {
+                    continue;
+                }
+                procs.add(parts[1]);
+                if (IME_PKG.equals(parts[1])) {
+                    main = s;               // 主进程：键盘在这里
                 }
             }
-            if (last == null) {
-                return "无记录";
+            if (main == null) {
+                hb.detail = "只记录到子进程，还没记录到键盘进程\n共 " + procs.size() + " 个进程写过";
+                return hb;
             }
-            String shown = main != null ? prettyHeartbeat(main) : "尚未记录到（只有子进程写过）";
-            return shown + "\n共 " + procs.size() + " 个进程写过";
+            hb.found = true;
+            hb.ageText = ageTextOf(main);
+            hb.detail = detailOf(main) + "\n共 " + procs.size() + " 个进程写过";
+            return hb;
         } catch (Throwable t) {
-            return "读取失败：" + t;
+            hb.detail = "读取失败：" + t;
+            return hb;
         }
     }
 
-    /** 心跳行是「epochMillis 进程名 pid=…」，把时间戳换成可读时间。 */
-    private String prettyHeartbeat(String line) {
+    /** 心跳行是「epochMillis 进程名 pid=…」。 */
+    private static String ageTextOf(String line) {
         String[] parts = line.split(" ", 3);
-        if (parts.length < 2) {
-            return line;
+        if (parts.length < 1) {
+            return "未知时间";
         }
         try {
-            long ms = Long.parseLong(parts[0]);
-            String time = new java.text.SimpleDateFormat("MM-dd HH:mm:ss", Locale.US)
-                    .format(new java.util.Date(ms));
-            long ageSec = (System.currentTimeMillis() - ms) / 1000;
-            return ageSec + " 秒前 · " + parts[1] + (parts.length > 2 ? " " + parts[2] : "")
-                    + "\n" + time;
+            long ageSec = (System.currentTimeMillis() - Long.parseLong(parts[0])) / 1000;
+            if (ageSec < 60) {
+                return "不到一分钟前";
+            }
+            if (ageSec < 3600) {
+                return (ageSec / 60) + " 分钟前";
+            }
+            if (ageSec < 86400) {
+                return (ageSec / 3600) + " 小时前";
+            }
+            return (ageSec / 86400) + " 天前";
         } catch (Throwable t) {
-            return line;
+            return "未知时间";
         }
+    }
+
+    /** 详情行：pid 与启动时刻。这两个值要字符对齐，所以走等宽。 */
+    private static String detailOf(String line) {
+        String[] parts = line.split(" ", 3);
+        String pid = parts.length > 2 ? parts[2] : "";
+        String time = "";
+        try {
+            long ms = Long.parseLong(parts[0]);
+            time = new java.text.SimpleDateFormat("MM-dd HH:mm:ss", Locale.US)
+                    .format(new java.util.Date(ms));
+        } catch (Throwable t) {
+            // 时间解析不出来只影响这一行的可读性，pid 照常显示。
+        }
+        return (pid.isEmpty() ? "" : pid + "，") + (time.isEmpty() ? "" : time + " 启动");
     }
 }

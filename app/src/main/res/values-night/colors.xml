@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 暗色下的同一个赭。这里要分开的是轨道与深底（6.2:1），
+         所以取亮一档；白拨杆对它的 3.0:1 在非文本组件上够用。 -->
+    <color name="accent">#C8873C</color>
+</resources>
