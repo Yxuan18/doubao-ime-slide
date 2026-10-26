@@ -93,7 +93,7 @@
 | 40 | 配置缺失回落 | 删除 `settings.xml` 后轻点：回到默认值 `true`（有 DEBUG 行），`logcat -b crash` 无记录 | modules.log + logcat | A |
 | 41 | 导出面 | `dumpsys package app.xuan.doubaoslide` 只有一个组件：`SettingsActivity`（launcher filter），无 provider / receiver / service | dumpsys | A |
 | 42 | 诊断页内容 | 设置页显示：模块版本 1.1.0、豆包 1.5.3、文件里的值、配置文件绝对路径与状态、键盘进程心跳（含"共 4 个进程写过"） | `uiautomator dump` 读 Activity 的 TextView | A |
-| 43 | 启动图标 | APK 的 `application-icon` 指向自适应图标（`resources-anydpi-v26` 背景/前景/单色三层）；launcher 里能解析到 `.SettingsActivity`，点击进设置页 | `aapt2 dump badging` + `cmd package resolve-activity` | A |
+| 43 | 启动图标与桌面名 | `application-icon` 指向自适应图标（`mipmap-anydpi-v26` 背景/前景/单色三层）；launcher 解析到 `.SettingsActivity`；桌面名是短名「下滑快捷键」，应用名仍是「豆包下滑快捷键」（全名在 5 个汉字处被 MIUI 截断成"豆包下滑快…"）。真机截屏看过图标形态：深色圆角方 + 白色下箭头 + 灰色基线 | `aapt2 dump badging` + `resolve-activity` + 截屏 | A（形态） / 观感见受限项 |
 
 ## 四、未达标与受限项
 

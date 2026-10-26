@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    LSPosed 模块清单。没有 Activity：这不是一个给人用的 App，只是一段注入代码。
-    LSPosed 从 meta-data 认出模块，从 assets/xposed_init 找到入口类。
+    LSPosed 模块清单。主体是一段注入代码：LSPosed 从 meta-data 认出模块，
+    从 assets/xposed_init 找到入口类。唯一的 Activity 是设置页（见文件末尾）。
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
@@ -43,7 +43,7 @@
         <activity
             android:name=".SettingsActivity"
             android:exported="true"
-            android:label="@string/app_name"
+            android:label="@string/app_name_short"
             android:theme="@style/AppTheme">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

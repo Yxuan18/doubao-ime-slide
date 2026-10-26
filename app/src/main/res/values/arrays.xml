@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">豆包下滑快捷键</string>
+    <!-- 桌面图标下的名字。完整名字在 5 个汉字处就被 MIUI 截断成"豆包下滑快…"，
+         所以桌面用一个能放下的短名；系统设置与 LSPosed 列表仍显示全名。 -->
+    <string name="app_name_short">下滑快捷键</string>
 
     <string-array name="xposedscope">
         <item>com.bytedance.android.doubaoime</item>
