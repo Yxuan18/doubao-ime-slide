@@ -87,12 +87,17 @@ private static final float STRIP_FRAC = 151f / 909f;  // 顶部候选栏/工具�
 
 ```
 DOWN 437,548 view=1080x909 字母=c
+事件 action=0 handle=-5476376677671717424 437,548 deferred=false
 扣住 DOWN 420,657 字母=c (1080x909)
 扣住 MOVE action=2 403,604
 performContextMenuAction(copy, 16908321) = true
 手势 c -> copy ok=true dy=80 (fire>60)
 补发手势：c moves=31 dy=-164
+多指输入：本次手势不判快捷键
 ```
+
+`事件 action=…` 是逐事件日志：`action` 是引擎透出的动作码（0 按下、1 抬起、
+2 移动、5 第二根手指按下），`handle` 在同一段触摸里保持不变。多指问题只能靠它定位。
 
 排障时先看 `view=` 后面的尺寸：候选栏出现/消失会让整块键盘上下移动并改宽度，
 同一个屏幕坐标可能落到不同的键上，所以标定时以这一行为准。
@@ -106,6 +111,10 @@ performContextMenuAction(copy, 16908321) = true
   `adb shell su -c 'ime set com.bytedance.android.doubaoime/.ImeService'`。
 - 五个被映射的键（C V X A Z）不再弹豆包的长按备选符号。按住超过 900ms 不动再松开，
   仍然只打出一个字母。
+- **两根手指同时落在键盘上时，本次手势不触发快捷键**，只把原始轨迹补发回引擎。
+  这是刻意的：引擎在 `MOVE` 里不带指针下标，`handle` 在多指事件里也是同一个值，
+  分不清哪条坐标属于哪根手指。实测不做这个限制时，A + C 两指会误触发一次全选。
+  单指输入（包括两指打字但每次只落一指）不受影响。
 - 豆包会同时保留多个进程（主进程、`:push`、`:upgrade`、`:sandboxed_process0`），
   模块会注入每一个；手势逻辑只在带键盘视图的那个进程里实际生效。
 - 输入法升级后如果包名、`KeyboardView` 或 `KeyboardJni` 改名，模块会自动退化为不启用
@@ -130,6 +139,14 @@ app/src/main/java/app/xuan/doubaoslide/
 ## 验收
 
 逐项数字、证据等级、被放弃的方案与已知限制见 [ACCEPTANCE.md](ACCEPTANCE.md)。
+
+`Geometry`（键位换算与阈值比例）有 JVM 单元测试，不需要设备：
+
+```bash
+./gradlew :app:testDebugUnitTest
+```
+
+手势闸门、动作层、棋盘守卫绑在 Android 与 Xposed 反射上，只能真机验收。
 
 ## 许可
 

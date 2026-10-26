@@ -29,7 +29,9 @@ adb shell su -c 'grep -a DoubaoSlide /data/adb/lspd/log/modules_*.log | tail -5'
 
 ## 验收
 
-**没有单元测试，也没接 CI。** 唯一验收是真机手势 + 模块日志 + 截屏，结论和证据等级写进 `ACCEPTANCE.md`。改任何手势行为，都在那里补一行实测记录。
+**手势行为没有自动化测试，也没接 CI。** 唯一验收是真机手势 + 模块日志 + 截屏，结论和证据等级写进 `ACCEPTANCE.md`。改任何手势行为，都在那里补一行实测记录。
+
+纯 JVM 的 `Geometry` 有单元测试：`app/src/test/java/app/xuan/doubaoslide/GeometryTest.java`，跑 `./gradlew :app:testDebugUnitTest`。它只锁两件事——真机实测过的坐标仍命中同一个键、比例换算在别的视图尺寸下结果一致。它**不覆盖**候选栏位移、反射、`InputConnection`，所以绿了也不代表手势对。lane 配置在 `.claude/tdd-guardian/config.json`（门禁默认不自动拦截）。
 
 标定铁律，违反它会得到完全错误的结论：**候选栏/组合区一出现，整块键盘会整体上移并改变键宽**，同一个屏幕坐标会落到另一个键上。每次手势测试先用 `Log.DEBUG=true` 构建，从 `DOWN <x>,<y> view=<w>x<h> 字母=<c>` 这一行确认落键，再谈结果。
 
@@ -60,6 +62,7 @@ adb shell su -c 'grep -a DoubaoSlide /data/adb/lspd/log/modules_*.log | tail -20
 maxDy > FIRE                      触发快捷键（带触感）
 向下 maxDy > GATE 且终点没回到起点上方   作废：不打字也不触发
 其余（轻点 / 上滑 / 横滑）              按原坐标、原时间戳、原顺序整段补发
+见过第二根手指（action=5）              跳过快捷键判定，整段补发
 ```
 
 三条必须读懂的不变量：
@@ -74,7 +77,7 @@ maxDy > FIRE                      触发快捷键（带触感）
 - **`app/libs/xposed-api-82.jar` 只能 `compileOnly`。** 运行时实现由 LSPosed 提供；打进 APK 会冲突。
 - **绝不调用 `KeyboardJni` 的静态入口。** 没有实例时那样调会把输入法进程打挂（实测发生过）。只能拿实例、调实例方法，且每次按下重读类型、不缓存。
 - **输入法是最不能崩的组件。** 任何异常都 `catch` 住并把事件交回引擎；宁可少一个快捷键，也不要让用户没有键盘。`BoardGuard` / `SlideHook` 的失败路径都遵守这条。
-- 手势状态是全局单例：键盘单实例、触摸事件在 UI 线程串行到达。多指同时按下时后一个 DOWN 重置状态，最坏丢一个字母，不会错触发。
+- 手势状态是全局单例：键盘单实例、触摸事件在 UI 线程串行到达。**多指要单独处理**：第二根手指按下时引擎发的是 `action=5`（不是又一个 0），`handle` 在多指事件里是同一个值，`MOVE` 也不带指针下标——第二根手指落下之后，任何一条坐标都可能属于另一根手指。所以见到 `action=5` 就把这次手势标记为多指，放弃快捷键判定、只做补发。去掉这条限制时，A + C 两指实测误触发过一次 `selectAll`（`ACCEPTANCE.md` 第 5 节）。
 - `nativeTouch` 的坐标是**视图局部坐标**；本机视图 1080×909 时顶边在屏幕 y=1401。
 
 ## 工程红线（裁剪自 `~/SEC/tstools/CLAUDE.md`）

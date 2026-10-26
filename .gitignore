@@ -19,3 +19,7 @@ local.properties
 # 抓包/排障产物
 *.hprof
 captures/
+
+# tdd-guardian generated artifacts
+.claude/tdd-guardian/state.json
+.claude/tdd-guardian/receipts.json

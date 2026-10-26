@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 2,
+  "enabled": true,
+  "enforceOnTaskCompleted": false,
+  "blockCommitWithoutFreshGate": false,
+  "staleGateAction": "deny",
+  "gateFreshnessMinutes": 120,
+  "smartStaleness": true,
+  "bypassEnv": "TDD_GUARD_BYPASS",
+  "preflightCommand": "",
+  "lanes": [
+    {
+      "name": "unit",
+      "description": "Geometry 的纯 JVM 回归测试。锁住两件事：真机实测坐标仍命中同一个键、比例换算在别的视图尺寸下给出同样结果。手势闸门 / 动作层 / 棋盘守卫绑在 Android 与 Xposed 反射上，不在这一层。",
+      "command": "./gradlew :app:testDebugUnitTest",
+      "gateOn": ["taskCompleted", "commit"],
+      "coverage": "none",
+      "timeoutMs": 600000
+    }
+  ],
+  "coverageThresholds": {
+    "lines": 0,
+    "functions": 0,
+    "branches": 0,
+    "statements": 0
+  },
+  "coverageMode": "no-decrease",
+  "requireMutation": false,
+  "mutationCommand": "",
+  "mutationGateOn": ["push"]
+}

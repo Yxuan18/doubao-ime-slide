@@ -19,8 +19,8 @@ android {
         minSdk = 26
         targetSdk = 34
 
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
     }
 
     buildTypes {
@@ -41,4 +41,7 @@ android {
 dependencies {
     // Xposed API 82：仅编译期可见，运行时由 LSPosed 提供，绝不能打包进 APK。
     compileOnly(files("libs/xposed-api-82.jar"))
+
+    // 只有 Geometry 是纯 JVM 代码，能用单元测试锁住；手势闸门仍旧只能真机验收。
+    testImplementation("junit:junit:4.13.2")
 }
