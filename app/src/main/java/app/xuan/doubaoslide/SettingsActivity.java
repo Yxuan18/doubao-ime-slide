@@ -3,11 +3,13 @@ package app.xuan.doubaoslide;
 import android.app.Activity;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Typeface;
 import android.os.Bundle;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.CompoundButton;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Switch;
@@ -16,12 +18,14 @@ import android.widget.TextView;
 import java.io.File;
 import java.io.RandomAccessFile;
 import java.lang.reflect.Field;
+import java.util.Locale;
 
 /**
- * 设置页：一个运行时开关 + 一屏诊断信息。
+ * 设置页：一个运行时开关 + 一屏诊断。
  *
- * <p>为什么不用 layout XML / androidx：只有两个控件。纯代码布局让 APK 不变大，也保持
- * 「离线可构建、不引 Kotlin」这条既有约束。
+ * <p><b>界面原则</b>：跟随系统主题取色（不自己发明配色），只用一个字号阶梯和一条
+ * 发丝线做层次，不堆卡片、阴影、图标。开关用平台控件，字体用系统字体——这样在
+ * MIUI 上看起来像系统自带设置，而不是一个外挂 App。
  *
  * <p>这个 Activity 跑在**模块自己的进程**里，不在豆包进程里。它写的是普通
  * {@code SharedPreferences}，由 LSPosed 重定向到与作用域共享的路径——见 {@link Config}。
@@ -34,12 +38,22 @@ public class SettingsActivity extends Activity {
     private static final String TAG = "DoubaoSlideSettings";
 
     private SharedPreferences prefs;
+
+    private int colorAccent;
+    private int colorPrimary;
+    private int colorSecondary;
+    private int colorDivider;
+
     private Switch debugSwitch;
-    private TextView diagnostics;
+    private LinearLayout diagnosticRows;
+
+    /** 程序化 setChecked 会触发监听器，用这个标记把「回填」和「用户操作」分开。 */
+    private boolean binding;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        resolveThemeColors();
         prefs = getSharedPreferences(Config.PREFS, MODE_PRIVATE);
         setContentView(buildUi());
         ensureSharedFiles();
@@ -48,74 +62,175 @@ public class SettingsActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        // 可能被别的地方改过，回来时以文件为准
-        if (debugSwitch != null) {
-            debugSwitch.setChecked(prefs.getBoolean(Config.KEY_DEBUG, Config.DEFAULT_DEBUG));
-        }
+        binding = true;
+        debugSwitch.setChecked(prefs.getBoolean(Config.KEY_DEBUG, Config.DEFAULT_DEBUG));
+        binding = false;
         refreshDiagnostics();
     }
 
-    // ------------------------------------------------------------------ UI
+    // ------------------------------------------------------------------ 主题
+
+    private void resolveThemeColors() {
+        colorPrimary = themeColor(android.R.attr.textColorPrimary, 0xFF1A1A1A);
+        // 不用 ?android:attr/colorAccent：本机 MIUI 把 DeviceDefault 的强调色改成了灰，
+        // 开关"开"和"关"就只差拨杆位置。用自己定的赭石色。
+        colorAccent = getResources().getColor(R.color.accent, getTheme());
+        colorSecondary = themeColor(android.R.attr.textColorSecondary, 0xFF6B6B6B);
+        // 分割线用正文色的 10% 透明度，深浅色下都自然
+        colorDivider = (colorPrimary & 0x00FFFFFF) | 0x1A000000;
+    }
+
+    private int themeColor(int attr, int fallback) {
+        TypedValue tv = new TypedValue();
+        if (!getTheme().resolveAttribute(attr, tv, true)) {
+            return fallback;
+        }
+        if (tv.type >= TypedValue.TYPE_FIRST_COLOR_INT && tv.type <= TypedValue.TYPE_LAST_COLOR_INT) {
+            return tv.data;
+        }
+        if (tv.resourceId != 0) {
+            return getResources().getColor(tv.resourceId, getTheme());
+        }
+        return fallback;
+    }
+
+    // ------------------------------------------------------------------ 布局
 
     private View buildUi() {
-        int pad = dp(20);
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(pad, pad, pad, pad);
+        int side = dp(24);
+        root.setPadding(side, dp(28), side, dp(32));
 
-        TextView title = text(getString(R.string.app_name), 22, true);
+        // 标题
+        TextView title = text(getString(R.string.app_name), 26, colorPrimary);
+        title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         root.addView(title);
-        root.addView(text("模块设置", 13, false));
 
-        debugSwitch = new Switch(this);
-        debugSwitch.setText("详细日志（DEBUG）");
-        debugSwitch.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
-        debugSwitch.setPadding(0, dp(24), 0, 0);
-        debugSwitch.setChecked(prefs.getBoolean(Config.KEY_DEBUG, Config.DEFAULT_DEBUG));
-        debugSwitch.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
-            @Override
-            public void onCheckedChanged(android.widget.CompoundButton button, boolean checked) {
-                apply(checked);
-            }
-        });
-        root.addView(debugSwitch);
+        TextView subtitle = text("按住字母下滑，执行复制 / 粘贴 / 剪切 / 全选 / 撤销", 13, colorSecondary);
+        root.addView(subtitle, paramsTop(dp(6)));
 
-        root.addView(text("打开后，每次按键都会往 LSPosed 日志里写几行。"
-                + "改完不需要重启输入法：下一次按键就会用新值。", 13, false));
+        // 日志
+        root.addView(sectionLabel("日志"), paramsTop(dp(36)));
+        root.addView(buildSwitchRow(), paramsTop(dp(4)));
+        root.addView(hairline(), hairlineParams(dp(16), 0));
 
-        TextView divider = new TextView(this);
-        divider.setHeight(dp(1));
-        divider.setBackgroundColor(0x22888888);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(1));
-        lp.topMargin = dp(24);
-        lp.bottomMargin = dp(16);
-        root.addView(divider, lp);
+        // 诊断
+        root.addView(sectionLabel("诊断"), paramsTop(dp(28)));
+        diagnosticRows = new LinearLayout(this);
+        diagnosticRows.setOrientation(LinearLayout.VERTICAL);
+        root.addView(diagnosticRows, paramsTop(dp(4)));
 
-        root.addView(text("诊断信息", 15, true));
+        // 脚注
+        root.addView(hairline(), hairlineParams(dp(12), 0));
+        TextView note = text(
+                "诊断值由输入法进程写进共享目录，仅供排障参考，不具安全性。"
+                        + "若「键盘进程」一直为空，说明模块没有注入到豆包——先去看 LSPosed 的日志。",
+                12, colorSecondary);
+        note.setLineSpacing(dp(3), 1f);
+        root.addView(note, paramsTop(dp(14)));
 
-        diagnostics = text("", 13, false);
-        diagnostics.setLineSpacing(dp(4), 1f);
-        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        dlp.topMargin = dp(8);
-        root.addView(diagnostics, dlp);
-
-        ScrollView scroll = new ScrollView(this);
-        scroll.addView(root);
+        scroll.addView(root, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         return scroll;
     }
 
-    private TextView text(String s, int sp, boolean bold) {
+    private View buildSwitchRow() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(10), 0, dp(10));
+        row.setMinimumHeight(dp(56));
+
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.addView(text("详细日志", 16, colorPrimary));
+
+        TextView desc = text("每次按键都写入 LSPosed 日志。改完立刻生效，不需要重启输入法。",
+                13, colorSecondary);
+        desc.setLineSpacing(dp(2), 1f);
+        col.addView(desc, paramsTop(dp(3)));
+
+        row.addView(col, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        debugSwitch = new Switch(this);
+        debugSwitch.setShowText(false);            // 文字放在左边，开关只要拨杆
+        // 平台默认的轨道在深浅两套主题里都是灰的，"开"和"关"只靠拨杆位置区分，
+        // 一瞥之下容易读错。接系统强调色，状态就一眼可辨。
+        // 轨道与拨杆用同一套状态色：开=赭石底+白拨杆，关=浅灰底+灰拨杆。
+        // 只上轨道的话，MIUI 默认的蓝色拨杆会跟赭石撞色。
+        debugSwitch.setTrackTintList(new android.content.res.ColorStateList(
+                new int[][]{{android.R.attr.state_checked}, {}},
+                new int[]{colorAccent, (colorPrimary & 0x00FFFFFF) | 0x33000000}));
+        // 拨杆始终是白的：状态只由轨道颜色和拨杆位置表达，少一个变量。
+        // （不设的话 MIUI 会给一个系统蓝的拨杆，跟赭石撞色。）
+        debugSwitch.setThumbTintList(new android.content.res.ColorStateList(
+                new int[][]{{android.R.attr.state_checked}, {}},
+                new int[]{0xFFFFFFFF, 0xFFFFFFFF}));
+        debugSwitch.setChecked(prefs.getBoolean(Config.KEY_DEBUG, Config.DEFAULT_DEBUG));
+        debugSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton button, boolean checked) {
+                if (binding) {
+                    return;
+                }
+                apply(checked);
+            }
+        });
+        LinearLayout.LayoutParams sw = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        sw.leftMargin = dp(16);
+        row.addView(debugSwitch, sw);
+
+        // 整行可点，不只靠那个小拨杆
+        row.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                debugSwitch.toggle();
+            }
+        });
+        return row;
+    }
+
+    private TextView sectionLabel(String s) {
+        TextView tv = text(s, 12, colorSecondary);
+        tv.setLetterSpacing(0.08f);
+        tv.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        return tv;
+    }
+
+    /** 发丝线。高度必须是固定值——用 WRAP_CONTENT 会被撑满整屏。 */
+    private View hairline() {
+        View v = new View(this);
+        v.setBackgroundColor(colorDivider);
+        return v;
+    }
+
+    private LinearLayout.LayoutParams hairlineParams(int topMarginDp, int insetLeftDp) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(1) / 2));
+        lp.topMargin = topMarginDp;
+        lp.leftMargin = insetLeftDp;
+        return lp;
+    }
+
+    private TextView text(String s, int sp, int color) {
         TextView tv = new TextView(this);
         tv.setText(s);
         tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
-        if (bold) {
-            tv.setTypeface(null, android.graphics.Typeface.BOLD);
-        }
+        tv.setTextColor(color);
         tv.setGravity(Gravity.START);
         return tv;
+    }
+
+    private LinearLayout.LayoutParams paramsTop(int topMarginDp) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = topMarginDp;
+        return lp;
     }
 
     private int dp(int v) {
@@ -159,11 +274,9 @@ public class SettingsActivity extends Activity {
 
     /** 首屏就把心跳文件准备好，否则注入进程没有可写的目标。 */
     private void ensureSharedFiles() {
-        File f = prefsFile();
-        if (f == null) {
-            return;
+        if (prefsFile() != null) {
+            makeSharedFilesReadable();
         }
-        makeSharedFilesReadable();
     }
 
     /**
@@ -193,39 +306,55 @@ public class SettingsActivity extends Activity {
     // ------------------------------------------------------------------ 诊断
 
     private void refreshDiagnostics() {
-        if (diagnostics == null) {
+        if (diagnosticRows == null) {
             return;
         }
-        StringBuilder sb = new StringBuilder();
-
-        sb.append("模块版本   ").append(versionOf(getPackageName())).append('\n');
-
-        String imeVersion = versionOf(IME_PKG);
-        sb.append("豆包输入法 ").append(imeVersion == null ? "未安装" : imeVersion).append('\n');
+        diagnosticRows.removeAllViews();
 
         boolean stored = prefs.contains(Config.KEY_DEBUG);
-        sb.append("文件里的值 ")
-                .append(stored ? String.valueOf(prefs.getBoolean(Config.KEY_DEBUG, false))
-                        : "未设置（用默认 " + Config.DEFAULT_DEBUG + "）").append('\n');
+        boolean value = prefs.getBoolean(Config.KEY_DEBUG, Config.DEFAULT_DEBUG);
+
+        addRow("模块版本", versionOf(getPackageName()));
+        addRow("豆包输入法", versionOf(IME_PKG) == null ? "未安装" : versionOf(IME_PKG));
+        addRow("当前值", (value ? "开" : "关")
+                + (stored ? " · 已保存" : " · 默认（尚未设置）"));
 
         File f = prefsFile();
         String state;
         if (f == null) {
             state = "未知";
         } else if (!f.exists()) {
-            state = "（尚未写入，当前用默认值）";
+            state = "尚未写入，当前用默认值";
         } else {
-            state = f.canRead() ? "（可读）" : "（读不到）";
+            state = f.canRead() ? "可读" : "读不到";
         }
-        sb.append("配置文件   ").append(f == null ? "未知" : f.getAbsolutePath() + state).append('\n');
+        addRow("配置文件", f == null ? state : f.getAbsolutePath() + "\n" + state);
 
-        sb.append("键盘进程   ").append(heartbeatSummary(f)).append('\n');
+        addRow("键盘进程", heartbeatSummary(f));
+    }
 
-        sb.append('\n').append("诊断值由输入法进程写进共享目录，仅供排障参考，不具安全性。"
-                + "若「最近注入」一直为空，说明模块没有注入到豆包——去看 LSPosed 的日志，"
-                + "而不是怀疑这个开关。");
+    private void addRow(String label, String value) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setPadding(0, dp(10), 0, dp(10));
 
-        diagnostics.setText(sb.toString());
+        // 只在行与行之间画线，最后一行下面不留悬空的线
+        if (diagnosticRows.getChildCount() > 0) {
+            diagnosticRows.addView(hairline(), hairlineParams(0, dp(88)));
+        }
+
+        TextView l = text(label, 13, colorSecondary);
+        l.setWidth(dp(88));
+        l.setPadding(0, dp(1), dp(8), 0);
+        row.addView(l);
+
+        TextView v = text(value, 13, colorPrimary);
+        v.setTypeface(Typeface.MONOSPACE);
+        v.setTextIsSelectable(true);
+        v.setLineSpacing(dp(3), 1f);
+        row.addView(v, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        diagnosticRows.addView(row);
     }
 
     private String versionOf(String pkg) {
@@ -255,14 +384,14 @@ public class SettingsActivity extends Activity {
         }
         try {
             RandomAccessFile raf = new RandomAccessFile(hb, "r");
-            String text;
+            String content;
             try {
                 long len = raf.length();
                 long start = Math.max(0, len - 4096);
                 raf.seek(start);
                 byte[] buf = new byte[(int) (len - start)];
                 raf.readFully(buf);
-                text = new String(buf, "UTF-8");
+                content = new String(buf, "UTF-8");
             } finally {
                 raf.close();
             }
@@ -270,7 +399,7 @@ public class SettingsActivity extends Activity {
             String main = null;
             String last = null;
             java.util.Set<String> procs = new java.util.HashSet<String>();
-            for (String line : text.split("\n")) {
+            for (String line : content.split("\\n")) {
                 String s = line.trim();
                 if (s.isEmpty()) {
                     continue;
@@ -288,25 +417,25 @@ public class SettingsActivity extends Activity {
                 return "无记录";
             }
             String shown = main != null ? prettyHeartbeat(main) : "尚未记录到（只有子进程写过）";
-            return shown + "  ·  共 " + procs.size() + " 个进程写过";
+            return shown + "\n共 " + procs.size() + " 个进程写过";
         } catch (Throwable t) {
             return "读取失败：" + t;
         }
     }
 
     /** 心跳行是「epochMillis 进程名 pid=…」，把时间戳换成可读时间。 */
-
     private String prettyHeartbeat(String line) {
-        String[] parts = line.split(" ", 2);
+        String[] parts = line.split(" ", 3);
         if (parts.length < 2) {
             return line;
         }
         try {
             long ms = Long.parseLong(parts[0]);
-            String time = new java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US)
+            String time = new java.text.SimpleDateFormat("MM-dd HH:mm:ss", Locale.US)
                     .format(new java.util.Date(ms));
             long ageSec = (System.currentTimeMillis() - ms) / 1000;
-            return time + "（" + ageSec + " 秒前） " + parts[1];
+            return ageSec + " 秒前 · " + parts[1] + (parts.length > 2 ? " " + parts[2] : "")
+                    + "\n" + time;
         } catch (Throwable t) {
             return line;
         }

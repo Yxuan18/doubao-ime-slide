@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    图标前景：一根向下的箭头压在键面基线上。
+
+    造型约束：自适应图标只有中间 72/108 是安全区，所以图形全部落在 x∈[36,72]、y∈[26,82]。
+    只用两种元素（箭头 + 一段基线），保证缩到状态栏尺寸仍然认得出。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 箭杆 -->
+    <path
+        android:pathData="M54,28 L54,62"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="7"
+        android:strokeLineCap="round" />
+
+    <!-- 箭头 -->
+    <path
+        android:pathData="M38,52 L54,68 L70,52"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <!-- 键面基线：半透明，给"下滑"一个落点 -->
+    <path
+        android:pathData="M36,81 L72,81"
+        android:strokeAlpha="0.45"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="5"
+        android:strokeLineCap="round" />
+</vector>

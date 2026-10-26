@@ -43,7 +43,7 @@
 | 设备 | Xiaomi 23116PN5BC（小米 14 Pro） |
 | 系统 | Android 16 / API 36 |
 | 豆包输入法 | `com.bytedance.android.doubaoime` 1.5.3（versionCode 100503006） |
-| 模块 | `app.xuan.doubaoslide`。第 1–16 项在 1.0.0 上测；第 17–20 项在 1.0.1（versionCode 2）上测；第 21–25 项在「1.0.1 + `GestureGate` 重构」上测；第 26–36 项在 1.0.1 + 后续修复上测；第 37–42 项在 1.1.0（versionCode 3，含设置页）上测 |
+| 模块 | `app.xuan.doubaoslide`。第 1–16 项在 1.0.0 上测；第 17–20 项在 1.0.1（versionCode 2）上测；第 21–25 项在「1.0.1 + `GestureGate` 重构」上测；第 26–36 项在 1.0.1 + 后续修复上测；第 37–43 项在 1.1.0（versionCode 3，含设置页）上测 |
 | LSPosed | 2.2.0-it（模块在管理器里带 “legacy” 标签） |
 | 键盘视图 | 1080×909，视图顶边在屏幕 y=1401 |
 
@@ -93,6 +93,7 @@
 | 40 | 配置缺失回落 | 删除 `settings.xml` 后轻点：回到默认值 `true`（有 DEBUG 行），`logcat -b crash` 无记录 | modules.log + logcat | A |
 | 41 | 导出面 | `dumpsys package app.xuan.doubaoslide` 只有一个组件：`SettingsActivity`（launcher filter），无 provider / receiver / service | dumpsys | A |
 | 42 | 诊断页内容 | 设置页显示：模块版本 1.1.0、豆包 1.5.3、文件里的值、配置文件绝对路径与状态、键盘进程心跳（含"共 4 个进程写过"） | `uiautomator dump` 读 Activity 的 TextView | A |
+| 43 | 启动图标 | APK 的 `application-icon` 指向自适应图标（`resources-anydpi-v26` 背景/前景/单色三层）；launcher 里能解析到 `.SettingsActivity`，点击进设置页 | `aapt2 dump badging` + `cmd package resolve-activity` | A |
 
 ## 四、未达标与受限项
 
@@ -127,6 +128,10 @@
      （`b` 与 `c` 的笔画数不同，同一个浮层的 n 值会差一截）。
   这条通道能证明「浮层在不在、形状对不对」，证不了「浮层里写了什么字」——后者靠
   第 31 项的 `uiautomator dump` 读提交后的文本。
+- **界面好不好看没有验收线。** 第 42–43 项只能证「控件在、文案对、图标被 launcher 认」，
+  证不了「看起来不像模板」。配色、间距、字重这些是靠截屏肉眼比对调出来的（暖赭色 `#C8873C`
+  替代系统默认蓝、发丝级分隔线、拨杆恒白只用轨道颜色表状态），没有可自动化的判据；
+  换个系统主题或 MIUI 版本，观感会变，这一项不算已验收。
 
 ## 五、认账
 

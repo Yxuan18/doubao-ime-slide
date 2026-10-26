@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 跟随系统的浅色/深色，不自己发明配色。DeviceDefault 让开关、字体沿用设备厂商
+         的样式（本机是 MIUI），比自己写一套更不违和。 -->
+    <style name="AppTheme" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+        <!-- 与内容区同色，否则状态栏下面会多出一条更深的带 -->
+        <item name="android:windowBackground">?android:attr/colorBackground</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>
