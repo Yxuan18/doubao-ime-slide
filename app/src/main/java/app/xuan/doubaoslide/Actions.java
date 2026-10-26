@@ -72,7 +72,7 @@ final class Actions {
                 }
             } catch (Throwable t) {
                 // 某个实例拿不到连接是常态（未被绑定），继续问下一个。
-                Log.i("getCurrentInputConnection 失败：" + t);
+                if (Log.DEBUG) Log.i("getCurrentInputConnection 失败：" + t);
             }
         }
         return null;
@@ -117,7 +117,7 @@ final class Actions {
         }
         try {
             boolean ok = ic.performContextMenuAction(id);
-            Log.i("performContextMenuAction(" + name + ", " + id + ") = " + ok);
+            if (Log.DEBUG) Log.i("performContextMenuAction(" + name + ", " + id + ") = " + ok);
             return ok;
         } catch (Throwable t) {
             Log.e("performContextMenuAction(" + name + ") 失败", t);
@@ -133,7 +133,7 @@ final class Actions {
         try {
             CharSequence selected = ic.getSelectedText(0);
             if (selected == null || selected.length() == 0) {
-                Log.i("没有选中内容，复制未执行");
+                if (Log.DEBUG) Log.i("没有选中内容，复制未执行");
                 return false;
             }
             Context ctx = contextOf();
@@ -144,7 +144,7 @@ final class Actions {
                 return false;
             }
             cm.setPrimaryClip(ClipData.newPlainText("doubao-slide", selected));
-            Log.i("复制走兜底通道（" + selected.length() + " 字符）");
+            if (Log.DEBUG) Log.i("复制走兜底通道（" + selected.length() + " 字符）");
             return true;
         } catch (Throwable t) {
             Log.e("复制兜底失败", t);
@@ -162,7 +162,7 @@ final class Actions {
                     ? null
                     : (ClipboardManager) ctx.getSystemService(Context.CLIPBOARD_SERVICE);
             if (cm == null || cm.getPrimaryClip() == null || cm.getPrimaryClip().getItemCount() == 0) {
-                Log.i("剪贴板为空，粘贴未执行");
+                if (Log.DEBUG) Log.i("剪贴板为空，粘贴未执行");
                 return false;
             }
             CharSequence text = cm.getPrimaryClip().getItemAt(0).coerceToText(ctx);
@@ -170,7 +170,7 @@ final class Actions {
                 return false;
             }
             ic.commitText(text, 1);
-            Log.i("粘贴走兜底通道（" + text.length() + " 字符）");
+            if (Log.DEBUG) Log.i("粘贴走兜底通道（" + text.length() + " 字符）");
             return true;
         } catch (Throwable t) {
             Log.e("粘贴兜底失败", t);
@@ -207,7 +207,7 @@ final class Actions {
                     HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
         } catch (Throwable t) {
             // 部分机型不支持触感反馈，忽略。
-            Log.i("触感反馈不可用：" + t);
+            if (Log.DEBUG) Log.i("触感反馈不可用：" + t);
         }
     }
 

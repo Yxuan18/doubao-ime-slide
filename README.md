@@ -129,7 +129,8 @@ performContextMenuAction(copy, 16908321) = true
 ```
 app/src/main/java/app/xuan/doubaoslide/
   XposedEntry.java   入口，按包名注入，跨 ClassLoader 去重
-  SlideHook.java     核心：在 KeyboardView.nativeTouch 上做三段闸门
+  SlideHook.java     反射调用 nativeTouch、扣事件、整段补发
+  GestureGate.java   纯判定状态机（FIRE / DEAD / REPLAY …），JVM 可测
   Actions.java       动作层：InputConnection + 剪贴板兜底
   BoardGuard.java    棋盘守卫：只在 kPinyin26 / kEnglish26 上武装
   Geometry.java      26 键几何模型
@@ -140,7 +141,7 @@ app/src/main/java/app/xuan/doubaoslide/
 
 逐项数字、证据等级、被放弃的方案与已知限制见 [ACCEPTANCE.md](ACCEPTANCE.md)。
 
-`Geometry`（键位换算与阈值比例）有 JVM 单元测试，不需要设备：
+`GestureGate`（五段判定）与 `Geometry`（键位换算与阈值比例）有 JVM 单元测试，不需要设备：
 
 ```bash
 ./gradlew :app:testDebugUnitTest

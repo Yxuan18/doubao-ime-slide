@@ -3,6 +3,11 @@
 记录日期：2026-10-26。所有结论来自真机实测，证据以 LSPosed 自身日志
 `/data/adb/lspd/log/modules_*.log`、`logcat` 与截屏为准。
 
+> 证据介质在 2026-10-26 下午切换：第 1–20 项按当时标准引用过截屏，保留不改；
+> 第 21 项起只用文本证据（模块日志 + `uiautomator dump`），规则见 `CLAUDE.md`
+> 的「调试规范：不看图」。渲染类结果（触感、选中高亮、候选栏长相）纯文本拿不到，
+> 记在第六节受限项里，不算已验收。
+
 ## 一、验收线（动手前定下的数字）
 
 | 项 | 判定线 | 依据 |
@@ -22,7 +27,7 @@
 | 设备 | Xiaomi 23116PN5BC（小米 14 Pro） |
 | 系统 | Android 16 / API 36 |
 | 豆包输入法 | `com.bytedance.android.doubaoime` 1.5.3（versionCode 100503006） |
-| 模块 | `app.xuan.doubaoslide` 1.0.1（versionCode 2）。第 1–16 项在 1.0.0 上测；第 17–20 项在 1.0.1 上测 |
+| 模块 | `app.xuan.doubaoslide` 1.0.1（versionCode 2）。第 1–16 项在 1.0.0 上测；第 17–20 项在 1.0.1 上测；第 21–25 项在「1.0.1 + `GestureGate` 重构」上测 |
 | LSPosed | 2.2.0-it（模块在管理器里带 “legacy” 标签） |
 | 键盘视图 | 1080×909，视图顶边在屏幕 y=1401 |
 
@@ -50,6 +55,11 @@
 | 18 | 多指不误触发 | 手指1 按 A（视图 y=408）、手指2 按 C（视图 y=629），手指1 先抬：改前 `手势 a -> selectAll ok=true dy=221`（误触发），改后 `补发手势：a moves=1 dy=221`，无快捷键 | modules.log 前后对照 | A |
 | 19 | 多指事件形态 | 第二根手指按下时引擎发 `action=5`（`ACTION_POINTER_DOWN`）；整段多点事件 `handle` 是同一个值（`-5476376677671717424`），不能用来区分指针；`MOVE` 不带指针下标 | modules.log `事件 action=5 handle=…` | A |
 | 20 | 多指输入不丢字 | 手指1 按 A、手指2 按 C，交替抬起，输入框得到 “ac”（两个字母都在） | 截屏（组合区 `ac`） + 日志 `补发手势：a moves=1` | A |
+| 21 | 重构后：轻点 / 上滑 / 死区 | 轻点 C → `补发手势：c moves=0 dy=0`，编辑框 `text="c"`；上滑 260px → `补发手势：c moves=24 dy=-260`，`text="c#"`；下滑 35px → `手势作废：dy=35 在 12 与 60 之间`，文字不变 | modules.log + `uiautomator dump`（纯文本） | A |
+| 22 | 重构后：全选 → 复制 → 粘贴 | `手势 a -> selectAll ok=true dy=270`、`手势 c -> copy ok=true dy=260`；点 ⌫ 后编辑框变空（证明选中态真实存在）；`手势 v -> paste ok=true dy=261` 后编辑框恢复 `text=" c#"` | modules.log + `uiautomator dump` | A |
+| 23 | 重构后：数字面隔离 | 切数字面后在同一坐标 (431,2030) 下滑，无任何 `DOWN`/`扣住` 行，引擎原生输入 `,`；字母面上同坐标是 `字母=c` | modules.log 无新增钩子行 + `uiautomator dump` | A |
+| 24 | 重构后：多指不误触发 | 同一注入脚本：`多指输入：本次手势不判快捷键` → `补发手势：a moves=1 dy=221`，**没有** `手势 a -> …`，编辑框追加 `ac` | modules.log + `uiautomator dump` | A |
+| 25 | 发布包冒烟（`DEBUG=false`） | 装入后键盘 `mInputShown=true`，轻点 C 编辑框追加 `c`；日志在重启后的时间段内没有任何 `DOWN`/`扣住`/`补发` 行 | modules.log + `uiautomator dump` | A |
 
 ## 四、回退项：上滑输符号失效（2026-10-26 用户报告）
 
@@ -105,7 +115,39 @@ G 上滑 `(`）。装上第一版模块后，被映射的五个键上滑只打�
 **验证。** 见第三节 #18–#20：同一注入脚本，改前误触发 `selectAll`，改后只补发；
 两个字母都还在，没有丢字。
 
-## 六、未达标与受限项
+## 六、重构：判定抽成纯类（2026-10-26）
+
+三处改动，全部落地并复测：
+
+1. **排障日志改懒输出。** 16 处逐手势 `Log.i` 全部包进 `if (Log.DEBUG)`，`XposedEntry`
+   的去重日志同样处理。交付构建里每一次触摸都不再写日志（第 25 项）。
+2. **判定抽成 `GestureGate` 纯类。** 五段判定（PASS / CAPTURE / FIRE / DEAD / REPLAY）
+   连同多指标记搬出 `SlideHook`，不碰反射、不碰 `View`，可以在 JVM 上直接测。
+   `SlideHook` 只剩三件事：反射调用、扣事件、整段补发。
+3. **两处静默降级改成显式。** `BoardGuard.install` / `SlideHook.install` 返回 `boolean`，
+   `XposedEntry` 只装上一半时打一行 `模块未完整装配：…` 警告（且不撤标志，避免下一份
+   ClassLoader 装出两套静态状态）；`BoardGuard` 对 `getCurrentKbdType` 先试
+   `setAccessible(true)`，设不上就打警告而不是留到调用时才失败。
+
+**红→绿证据（等级 A）。** 把 `GestureGate.onEvent` 临时改回 1.0.1 的行为（`action=5`
+当普通 MOVE 处理、不设多指标记），测试立刻变红：
+
+```
+GestureGateTest > multiPointerNeverFires FAILED
+    java.lang.AssertionError: 多指手势位移归属不可信，绝不能触发快捷键
+    expected:<REPLAY> but was:<FIRE>
+GestureGateTest > multiPointerBlocksDeadZoneToo FAILED
+27 tests completed, 2 failed
+```
+
+恢复实现后 27 项全绿（`GestureGateTest` 16 项 + `GeometryTest` 11 项，
+`./gradlew :app:testDebugUnitTest`）。这一对红绿锁的是第五节那个真机事故，
+不是补写的装饰测试。
+
+**设备侧回归。** 见第 21–25 项：轻点、上滑、死区、全选→复制→粘贴、数字面隔离、
+多指、发布包冒烟，全部为文本证据。
+
+## 七、未达标与受限项
 
 - **撤销在小米笔记里没有可见效果。** `InputConnection.performContextMenuAction(16908338)`
   返回 true，但笔记没有回滚。小米笔记的撤销栈不接受经输入法通道提交的编辑。
@@ -123,8 +165,12 @@ G 上滑 `(`）。装上第一版模块后，被映射的五个键上滑只打�
 - **上面那个 164px 只在测量当时的版面成立。** 候选栏出现会改变视图高度，引擎门槛跟着变：
   无候选栏的版面上，同样的 164px 上滑只打出字母，滑到 260px 才出 `#`（等级 A，2026-10-26 复测）。
   文档里的绝对像素值只能当量级用，标定请以 `DOWN … view=…` 行给出的视图高度为准。
+- **渲染类结果不在文本证据的覆盖范围内。** 触感反馈、选中高亮的外观、候选栏内容、
+  键位视觉对齐——这些是屏幕画出来的东西，纯文本拿不到。第 21–25 项能证明「事件被分到
+  正确的档、编辑框状态正确」，不能证明「用户看到的画面正确」。要让它们变成可验收项，
+  要么加一个能读取渲染结果的自动化通道，要么明确退回人工目视并标注等级；目前两者都没做。
 
-## 七、认账
+## 八、认账
 
 **被放弃的方案：**
 
@@ -150,13 +196,13 @@ G 上滑 `(`）。装上第一版模块后，被映射的五个键上滑只打�
   一旦见到第二根手指，这次手势就放弃快捷键判定、只做补发。也就是说两根手指同时按两个
   被映射键时，快捷键不会触发；换来的是不会误触发别的动作。
 
-## 八、先查轮子
+## 九、先查轮子
 
 参考实现 `kiraconnaughtonzp-eng/InputMethodBarEnhance`（MIT）只提供了 LSPosed 骨架
 （`xposed_init`、清单元数据、作用域声明）和 `InputConnection` 动作层；它不含手势拦截，
 触摸坐标与几何模型来自本项目的 spike 实测。仓内无重复实现，没有另起一套。
 
-## 九、开放问题
+## 十、开放问题
 
 1. **Xposed API 82 已被 LSPosed 标为 legacy。** 管理器提示“已弃用，未来版本将移除”。
    迁移到 libxposed API 102 需要换依赖与钩子模型，尚未做。
@@ -165,8 +211,11 @@ G 上滑 `(`）。装上第一版模块后，被映射的五个键上滑只打�
    交给引擎打符号。如果以后想把上滑也映射成快捷键（例如上滑 C 也复制），需要另加方向判定，
    并且要和引擎自己的符号手势抢同一个几何区间。
 
-## 十、证据位置
+## 十一、证据位置
 
-- LSPosed 日志：`/data/adb/lspd/log/modules_2026-10-24T13:57:50.725467.log`
+- LSPosed 日志：`/data/adb/lspd/log/modules_2026-10-24T13:57:50.725467.log`（第 1–16 项）；
+  `/data/adb/lspd/log/modules_2026-10-26T08:58:25.907758.log`（第 21–25 项，含 `action=5` 的标定行与重构后的手势行）
 - 截屏：`/tmp/doubao-ime/fp/`（`note4_s.png` 连续轻点、`note6_s.png` 剪切后、`note8_s.png` 粘贴后、
-  `num3_s.png` 数字面、`leak_s.png` 残留检查、`final1_s.png` 20 次手势后、`smoke_s.png` 发布包冒烟）
+  `num3_s.png` 数字面、`leak_s.png` 残留检查、`final1_s.png` 20 次手势后、`smoke_s.png` 发布包冒烟）。
+  第 21 项起不再产生截屏；复现靠日志关键字（`扣住 DOWN` / `补发手势` / `手势 … -> …` /
+  `手势作废` / `多指输入`）与 `adb shell uiautomator dump` 里的编辑框 `text`。

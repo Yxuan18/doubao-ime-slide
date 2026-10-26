@@ -41,17 +41,18 @@ final class BoardGuard {
     private BoardGuard() {
     }
 
-    static void install(ClassLoader classLoader) {
+    /** @return 是否装好；false 表示模块会整体保持不启用（键盘原样）。 */
+    static boolean install(ClassLoader classLoader) {
         Class<?> cls;
         try {
             cls = XposedHelpers.findClassIfExists(JNI_CLASS, classLoader);
         } catch (Throwable t) {
             Log.e("查找 " + JNI_CLASS + " 失败", t);
-            return;
+            return false;
         }
         if (cls == null) {
             Log.w("找不到 " + JNI_CLASS + "，模块将不启用（输入法版本可能变了）");
-            return;
+            return false;
         }
 
         try {
@@ -61,7 +62,14 @@ final class BoardGuard {
         }
         if (getCurrentKbdType == null) {
             Log.w("找不到 getCurrentKbdType，模块将不启用");
-            return;
+            return false;
+        }
+        try {
+            // 现在它是 public，不设也能调；设一次是为了它哪天变成包私有时不会静默失效
+            // （静默失效的表现是模块悄悄不工作，排查起来很费劲）。
+            getCurrentKbdType.setAccessible(true);
+        } catch (Throwable t) {
+            Log.w("getCurrentKbdType 无法设为可访问，继续按 public 调用：" + t);
         }
 
         try {
@@ -74,10 +82,11 @@ final class BoardGuard {
             });
         } catch (Throwable t) {
             Log.e("监听 KeyboardJni 构造函数失败", t);
-            return;
+            return false;
         }
 
         Log.always("棋盘守卫就绪：只武装 kPinyin26 / kEnglish26");
+        return true;
     }
 
     /** 当前棋盘是否是 26 键字母面；读不到就当作"不是"，交给引擎。 */

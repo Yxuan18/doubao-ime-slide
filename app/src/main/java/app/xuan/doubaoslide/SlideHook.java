@@ -11,6 +11,13 @@ import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 
+import app.xuan.doubaoslide.GestureGate.Verdict;
+
+import static app.xuan.doubaoslide.GestureGate.ACTION_DOWN;
+import static app.xuan.doubaoslide.GestureGate.ACTION_LEAVE;
+import static app.xuan.doubaoslide.GestureGate.ACTION_POINTER_DOWN;
+import static app.xuan.doubaoslide.GestureGate.ACTION_UP;
+
 /**
  * 下滑快捷键的核心：在 {@code KeyboardView.nativeTouch} 上做两段式闸门。
  *
@@ -40,14 +47,6 @@ final class SlideHook {
 
     private static final String KEYBOARD_VIEW = "com.bytedance.android.input.keyboard.KeyboardView";
     private static final String IME_SERVICE = "com.bytedance.android.doubaoime.ImeService";
-
-    /** 与 {@code nativeTouch(long handle, int x, int y, int action, long time)} 的动作码一致。 */
-    private static final int ACTION_DOWN = 0;
-    private static final int ACTION_UP = 1;
-    /** 第二根手指按下。实测引擎原样透出 5，而不是又发一个 0。 */
-    private static final int ACTION_POINTER_DOWN = 5;
-    /** 手指离开键盘区域时引擎收到 -1。 */
-    private static final int ACTION_LEAVE = -1;
 
     /**
      * 映射：字母 → InputConnection 动作名。
@@ -84,40 +83,49 @@ final class SlideHook {
     private static volatile Method nativeTouch;
 
     /**
-     * 手势状态。
+     * 判定状态机。
+     *
+     * <p>判据全在 {@link GestureGate} 里：纯 Java、不碰反射、有单元测试。这里只负责
+     * 把引擎的事件喂给它，再按它给的结论去扣事件、触发动作或补发。
      *
      * <p>触摸事件在 UI 线程上串行到达，键盘也只有一个 KeyboardView（实测），
      * 所以一份状态足够。
+     */
+    private static final GestureGate GATE = new GestureGate();
+
+    /**
+     * 补发缓冲：扣住期间的那些事件。
      *
-     * <p>多指是实测出来的，不是推的：第二根手指按下时引擎发的是 {@code action=5}
-     * （{@code ACTION_POINTER_DOWN}），而 {@code handle} 在整段多点事件里是同一个值，
-     * 不能靠它区分指针；{@code MOVE} 也不带指针下标。也就是说，第二根手指按下之后，
-     * 我们收到的任何一条坐标都可能属于另一根手指——拿它算位移会把一次多指输入判成
-     * 从第一根手指起点滑到第二根手指位置的"下滑"，实测触发过错误的 selectAll。
-     * 因此一旦见到 {@code action=5}，这次手势就不再判快捷键，UP 时整段补发。
+     * <p>只存 UP 时可能要用到的东西（起点、时间戳、每条 MOVE），判定不需要它们，
+     * 所以不放进 {@link GestureGate}。
      */
     private static final Gesture GESTURE = new Gesture();
 
     private SlideHook() {
     }
 
-    static void install(ClassLoader classLoader) {
+    /**
+     * @return 是否连输入连接也接好了。触摸钩子装不上就直接 false（模块不启用）；
+     *         触摸钩子装上但 ImeService 监听失败时也返回 false——这时手势能判，
+     *         但没有执行动作的通道，等于不完整。
+     */
+    static boolean install(ClassLoader classLoader) {
         Class<?> keyboardView;
         try {
             keyboardView = XposedHelpers.findClassIfExists(KEYBOARD_VIEW, classLoader);
         } catch (Throwable t) {
             Log.e("查找 " + KEYBOARD_VIEW + " 失败", t);
-            return;
+            return false;
         }
         if (keyboardView == null) {
             Log.w("找不到 " + KEYBOARD_VIEW + "，模块未挂载");
-            return;
+            return false;
         }
 
         Method target = findNativeTouch(keyboardView);
         if (target == null) {
             Log.w("找不到 nativeTouch(long,int,int,int,long)，模块未挂载");
-            return;
+            return false;
         }
 
         try {
@@ -126,12 +134,13 @@ final class SlideHook {
             XposedBridge.hookMethod(target, TOUCH_HOOK);
         } catch (Throwable t) {
             Log.e("挂载 nativeTouch 失败", t);
-            return;
+            return false;
         }
 
-        hookImeService(classLoader);
+        boolean serviceReady = hookImeService(classLoader);
 
         Log.always("手势闸门就绪：C 复制 / V 粘贴 / X 剪切 / A 全选 / Z 撤销");
+        return serviceReady;
     }
 
     private static Method findNativeTouch(Class<?> keyboardView) {
@@ -158,17 +167,18 @@ final class SlideHook {
      * <p>豆包会同时留不止一个实例，只有被绑定的那个有连接（实测），所以既要都留下，
      * 也要在使用时挨个问。
      */
-    private static void hookImeService(ClassLoader classLoader) {
+    /** @return 是否接上了输入连接的来源；false 表示手势能判但没有执行动作的通道。 */
+    private static boolean hookImeService(ClassLoader classLoader) {
         Class<?> service;
         try {
             service = XposedHelpers.findClassIfExists(IME_SERVICE, classLoader);
         } catch (Throwable t) {
             Log.e("查找 " + IME_SERVICE + " 失败", t);
-            return;
+            return false;
         }
         if (service == null) {
             Log.w("找不到 " + IME_SERVICE + "，快捷键将找不到输入连接");
-            return;
+            return false;
         }
         try {
             XposedBridge.hookAllConstructors(service, new XC_MethodHook() {
@@ -179,7 +189,9 @@ final class SlideHook {
             });
         } catch (Throwable t) {
             Log.e("监听 ImeService 构造函数失败", t);
+            return false;
         }
+        return true;
     }
 
     private static final XC_MethodHook TOUCH_HOOK = new XC_MethodHook() {
@@ -206,51 +218,47 @@ final class SlideHook {
         int action = ((Number) param.args[3]).intValue();
         long time = ((Number) param.args[4]).longValue();
         // 标定用：看清引擎实际透出哪些动作码（0 按下 / 1 抬起 / 2 移动 / 5 第二根手指）。
-        Log.i("事件 action=" + action + " handle=" + handle + " " + x + "," + y
-                + " deferred=" + GESTURE.deferred);
+        if (Log.DEBUG) {
+            Log.i("事件 action=" + action + " handle=" + handle + " " + x + "," + y
+                    + " deferred=" + GATE.deferred());
+        }
 
         if (action == ACTION_DOWN) {
             onDown(param, handle, x, y, time);
             return;
         }
 
-        if (!GESTURE.deferred) {
+        if (action == ACTION_UP) {
+            Verdict verdict = GATE.onUp(y);
+            if (verdict != Verdict.PASS) {
+                finish(param, x, y, time, verdict);
+            }
+            return;                         // PASS = 不是我们扣下的手势，原样放行
+        }
+
+        Verdict verdict = GATE.onEvent(action, y);
+        if (verdict == Verdict.PASS) {
             return;                         // 不是我们扣下的手势，一律放行
         }
-
         if (action == ACTION_LEAVE) {
-            GESTURE.reset();
-            param.setResult(null);          // 引擎没收到 DOWN，也不需要 LEAVE
-            return;
-        }
-
-        if (action == ACTION_POINTER_DOWN) {
-            // 第二根手指按下了。从这里开始坐标归属不可信，本次手势一律走补发。
-            GESTURE.multiPointer = true;
-            Log.i("多指输入：本次手势不判快捷键");
-        }
-
-        if (!GESTURE.multiPointer) {
-            int dy = y - GESTURE.y0;
-            if (dy > GESTURE.maxDy) {
-                GESTURE.maxDy = dy;
+            GESTURE.reset();                // 引擎没收到 DOWN，也不需要 LEAVE
+        } else {
+            GESTURE.recordMove(x, y, action, time);
+            if (Log.DEBUG) {
+                Log.i("扣住 MOVE action=" + action + " " + x + "," + y);
+                if (action == ACTION_POINTER_DOWN) {
+                    Log.i("多指输入：本次手势不判快捷键");
+                }
             }
         }
-
-        if (action == ACTION_UP) {
-            onUp(param, x, y, time);
-            return;
-        }
-
-        GESTURE.recordMove(x, y, action, time);
-        Log.i("扣住 MOVE action=" + action + " " + x + "," + y);
-        param.setResult(null);              // 手势中间的 MOVE 全部扣住，等 UP 时决定补发哪段
+        param.setResult(null);              // 扣住：等 UP 时再决定补发哪段
     }
 
     private static void onDown(XC_MethodHook.MethodHookParam param, long handle,
                                int x, int y, long time) {
-        // 只有第一根手指会走到这里（第二根是 action=5，见 dispatch）。这里清一次
-        // 状态，是为了把"上一条事件流丢了 UP"的残局收干净。
+        // 只有第一根手指会走到这里（第二根是 action=5，由 GestureGate.onEvent 处理）。
+        // 无论后面走哪条路，先清一次状态：把"上一条事件流丢了 UP"的残局收干净。
+        GATE.reset();
         GESTURE.reset();
 
         if (!(param.thisObject instanceof View)) {
@@ -267,49 +275,66 @@ final class SlideHook {
 
         char letter = Geometry.letterAt(x, y, w, h);
         // DEBUG 期用来标定坐标：每个 DOWN 都记下视图尺寸和它落在哪个键上。
-        Log.i("DOWN " + x + "," + y + " view=" + w + "x" + h + " 字母=" + letter);
+        if (Log.DEBUG) {
+            Log.i("DOWN " + x + "," + y + " view=" + w + "x" + h + " 字母=" + letter);
+        }
         String action = SHORTCUTS.get(letter);
-        if (action == null) {
+        if (GATE.onDown(y, h, action) != Verdict.CAPTURE) {
             return;                         // 未映射的键，引擎全看
         }
 
         GESTURE.begin(handle, x, y, time, w, h, letter, action);
-        Log.i("扣住 DOWN " + x + "," + y + " 字母=" + letter + " (" + w + "x" + h + ")");
+        if (Log.DEBUG) {
+            Log.i("扣住 DOWN " + x + "," + y + " 字母=" + letter + " (" + w + "x" + h + ")");
+        }
 
         // 关键一步：引擎看不到这次按下，也就不会往它自己的组合缓冲区里放字母。
         param.setResult(null);
     }
 
-    private static void onUp(XC_MethodHook.MethodHookParam param, int x, int y, long time) {
+    /**
+     * 抬手之后按判定结论收尾。
+     *
+     * <p>三种结局各有落法：触发动作、明确作废、整段补发。判定本身在
+     * {@link GestureGate}，这里只做动作。{@code PASS} 不会走到这里——那说明这一下
+     * 从一开始就不是我们扣住的。
+     */
+    private static void finish(XC_MethodHook.MethodHookParam param,
+                               int x, int y, long time, Verdict verdict) {
         Gesture g = GESTURE;
-        g.deferred = false;
         param.setResult(null);              // 无论哪种结局，这一下 UP 都不交给引擎
 
-        int fireAt = Math.round(g.h * Geometry.FIRE_FRAC);
-        int gateAt = Math.round(g.h * Geometry.GATE_FRAC);
-        int dy = y - g.y0;
-
-        if (g.multiPointer) {
-            // 多指手势不判快捷键：这一段位移属于哪根手指已经分不清了，
-            // 猜错的代价是一次莫名其妙的复制/全选，比"这次不触发"糟得多。
-            replayGesture(param, x, y, time, g);
-        } else if (g.maxDy > fireAt) {
-            if (param.thisObject instanceof View) {
-                Actions.haptic((View) param.thisObject);
+        switch (verdict) {
+            case FIRE: {
+                if (param.thisObject instanceof View) {
+                    Actions.haptic((View) param.thisObject);
+                }
+                boolean ok = Actions.perform(g.action);
+                if (Log.DEBUG) {
+                    Log.i("手势 " + g.letter + " -> " + g.action + " ok=" + ok
+                            + " dy=" + GATE.maxDy() + " (fire>" + GATE.fireAt() + ")");
+                }
+                break;
             }
-            boolean ok = Actions.perform(g.action);
-            Log.i("手势 " + g.letter + " -> " + g.action + " ok=" + ok
-                    + " dy=" + g.maxDy + " (fire>" + fireAt + ")");
-        } else if (g.maxDy > gateAt && dy >= -gateAt) {
-            // 向下滑过了死区、又没到触发线：明确作废。
-            Log.i("手势作废：dy=" + g.maxDy + " 在 " + gateAt + " 与 " + fireAt + " 之间");
-        } else {
-            // 轻点、上滑、横滑：把原始事件流原样送回去，引擎按它自己的规则处理
-            // （上滑符号就是在这里恢复的）。
-            replayGesture(param, x, y, time, g);
+            case DEAD:
+                // 向下滑过了死区、又没到触发线：明确作废。
+                if (Log.DEBUG) {
+                    Log.i("手势作废：dy=" + GATE.maxDy() + " 在 " + GATE.gateAt()
+                            + " 与 " + GATE.fireAt() + " 之间");
+                }
+                break;
+            case REPLAY:
+                // 轻点、上滑、横滑、多指：按原坐标、原时间戳、原顺序整段送回，引擎照
+                // 它自己的规则处理。上滑输符号就是在这里恢复的；多指时位移归属不可信，
+                // 只能这样。
+                replayGesture(param, x, y, time, g);
+                break;
+            default:
+                break;
         }
 
-        g.reset();
+        GESTURE.reset();
+        GATE.reset();
     }
 
     /**
@@ -338,7 +363,9 @@ final class SlideHook {
                 method.invoke(view, g.handle, g.moveX[i], g.moveY[i], g.moveAction[i], g.moveTime[i]);
             }
             method.invoke(view, g.handle, x, y, ACTION_UP, time);
-            Log.i("补发手势：" + g.letter + " moves=" + g.moveCount + " dy=" + (y - g.y0));
+            if (Log.DEBUG) {
+                Log.i("补发手势：" + g.letter + " moves=" + g.moveCount + " dy=" + (y - g.y0));
+            }
         } catch (Throwable t) {
             if (downSent) {
                 // DOWN 已送出而后续事件没送全，引擎里会残留一次按下。这里不再补别的事件
@@ -354,7 +381,7 @@ final class SlideHook {
         }
     }
 
-    /** 一次手势的全部状态。 */
+    /** 补发一次手势所需的数据。判定状态在 {@link GestureGate}，不在这里。 */
     private static final class Gesture {
 
         /**
@@ -365,16 +392,12 @@ final class SlideHook {
          */
         private static final int MAX_MOVES = 512;
 
-        boolean deferred;
-        /** 见过第二根手指（action=5）。一旦为真，maxDy 不再可信，也不判快捷键。 */
-        boolean multiPointer;
         long handle;
         long downTime;
         int x0;
         int y0;
         int w;
         int h;
-        int maxDy;
         char letter;
         String action;
 
@@ -385,15 +408,12 @@ final class SlideHook {
         final long[] moveTime = new long[MAX_MOVES];
 
         void begin(long handle, int x, int y, long time, int w, int h, char letter, String action) {
-            this.deferred = true;
-            this.multiPointer = false;
             this.handle = handle;
             this.downTime = time;
             this.x0 = x;
             this.y0 = y;
             this.w = w;
             this.h = h;
-            this.maxDy = 0;
             this.letter = letter;
             this.action = action;
             this.moveCount = 0;
@@ -411,11 +431,8 @@ final class SlideHook {
         }
 
         void reset() {
-            deferred = false;
-            multiPointer = false;
             letter = 0;
             action = null;
-            maxDy = 0;
             moveCount = 0;
         }
     }
