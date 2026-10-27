@@ -16,9 +16,7 @@ import android.widget.Switch;
 import android.widget.TextView;
 
 import java.io.File;
-import java.io.RandomAccessFile;
 import java.lang.reflect.Field;
-import java.util.Locale;
 
 /**
  * 设置页：一个运行时开关 + 一屏诊断。
@@ -36,7 +34,6 @@ import java.util.Locale;
  */
 public class SettingsActivity extends Activity {
 
-    private static final String IME_PKG = "com.bytedance.android.doubaoime";
 
     /** 本 Activity 跑在模块自己的进程里，没有 XposedBridge，所以用系统日志。 */
     private static final String TAG = "DoubaoSlideSettings";
@@ -321,15 +318,16 @@ public class SettingsActivity extends Activity {
         File f = prefsFile();
         boolean stored = prefs.contains(Config.KEY_DEBUG);
         boolean value = prefs.getBoolean(Config.KEY_DEBUG, Config.DEFAULT_DEBUG);
-        Heartbeat hb = readHeartbeat(f);
+        Diagnostics.Snapshot hb = Diagnostics.read(f);
 
         statusView.setText(statusSentence(hb));
         // 没注入时这句要弱下来，别让人以为出现了错误；注入成功才是正文色。
         statusView.setTextColor(hb.found ? colorPrimary : colorSecondary);
 
-        addRow("模块", versionOf(getPackageName()), false);
-        String ime = versionOf(IME_PKG);
-        addRow("豆包输入法", ime == null ? "未安装" : ime, false);
+        String self = versionOf(getPackageName());
+        addRow("模块", self == null ? "读取失败" : self, false);
+        String ime = versionOf(Diagnostics.IME_PKG);
+        addRow("豆包输入法", ime == null ? "未安装或读取失败" : ime, false);
         addRow("当前值", stored ? (value ? "开，已保存" : "关，已保存")
                 : "还没写入过，用的是默认值", false);
         addRow("最近快捷键", hb.fireText == null ? "还没有执行过" : hb.fireText, true);
@@ -348,7 +346,7 @@ public class SettingsActivity extends Activity {
      * 没注入要去 LSPosed 里开；钩子没挂上说明豆包改了钩子目标；
      * 动作通道没接上说明 ImeService 变了；执行失败说明调用链断了。
      */
-    private String statusSentence(Heartbeat hb) {
+    private String statusSentence(Diagnostics.Snapshot hb) {
         if (!hb.found) {
             return "还没有记录到模块注入键盘进程。在 LSPosed 里启用本模块、"
                     + "作用域勾上「豆包输入法」，然后重启一次输入法。";
@@ -413,192 +411,22 @@ public class SettingsActivity extends Activity {
         detailRows.addView(row);
     }
 
+    /**
+     * 读已安装包的版本号。
+     *
+     * @return 版本号；**没装**返回 {@code null}；读取出异常也返回 {@code null}，
+     *         但会记一行日志——区分"没装"和"读不到"靠日志，不靠往返回值里塞哨兵字符串
+     *         （哨兵和真版本号混在同一个通道里，调用方迟早会把"读取失败"当成版本号用）。
+     */
     private String versionOf(String pkg) {
         try {
             return getPackageManager().getPackageInfo(pkg, 0).versionName;
         } catch (PackageManager.NameNotFoundException e) {
+            android.util.Log.i(TAG, pkg + " 未安装");
             return null;
         } catch (Throwable t) {
-            return "读取失败";
+            android.util.Log.w(TAG, "读取 " + pkg + " 版本号失败：" + t);
+            return null;
         }
-    }
-
-    /** 心跳文件里读到的东西，全部翻译成页面能直接用的说法。 */
-    private static final class Heartbeat {
-        /** 找到键盘主进程那一行。心跳只在注入时写一次，所以"有这一行"≈"注入过"。 */
-        boolean found;
-        String ageText = "未知时间";
-        String detail = "无记录（模块可能还没注入过）";
-        /** 配置文件此刻读不读得到。两种失败要在状态句里说成不同的话。 */
-        boolean configReadable;
-        /** 钩子挂上了没有。false = 豆包改了钩子目标，模块抓不到按键。 */
-        boolean hooked = true;
-        /** 旧版心跳没有 hooked= 字段，这时不能判"没挂上"，只能说不知道。 */
-        boolean hookedKnown;
-        /** 动作通道（ImeService 构造钩子）接上了没有。 */
-        boolean svc = true;
-        boolean svcKnown;
-        /** 最近一次快捷键执行；null = 还没执行过。 */
-        String fireText;
-        /** 最近一次执行的结果分类，见 Actions.LAST_RESULT。null = 无记录。 */
-        String fireResult;
-    }
-
-    /**
-     * 读心跳。
-     *
-     * <p>四个进程（主进程、{@code :upgrade}、{@code :push}、{@code :sandboxed_process0}）
-     * 都会往同一个文件追加，所以"最后一行"经常是无关的子进程。这里只认**键盘所在的
-     * 主进程**那一行，其它进程只报个数。
-     */
-    private Heartbeat readHeartbeat(File prefsFile) {
-        Heartbeat hb = new Heartbeat();
-        if (prefsFile == null) {
-            hb.detail = "未知";
-            return hb;
-        }
-        hb.configReadable = prefsFile.exists() && prefsFile.canRead();
-
-        File file = new File(prefsFile.getParentFile(), Config.HEARTBEAT);
-        if (!file.exists() || file.length() == 0) {
-            return hb;
-        }
-        try {
-            String content;
-            RandomAccessFile raf = new RandomAccessFile(file, "r");
-            try {
-                long len = raf.length();
-                long start = Math.max(0, len - 4096);
-                raf.seek(start);
-                byte[] buf = new byte[(int) (len - start)];
-                raf.readFully(buf);
-                content = new String(buf, "UTF-8");
-            } finally {
-                raf.close();
-            }
-
-            String main = null;
-            java.util.Set<String> procs = new java.util.HashSet<String>();
-            for (String line : content.split("\\n")) {
-                String s = line.trim();
-                if (s.isEmpty()) {
-                    continue;
-                }
-                String[] parts = s.split(" ", 3);
-                if (parts.length < 2) {
-                    continue;
-                }
-                procs.add(parts[1]);
-                if (IME_PKG.equals(parts[1])) {
-                    main = s;               // 主进程：键盘在这里
-                }
-            }
-            // 钩子与动作通道状态从主进程那一行里取，形如 "pid=123 hooked=true svc=true"。
-            if (main != null) {
-                hb.hookedKnown = true;
-                hb.hooked = main.contains("hooked=true");
-                hb.svcKnown = true;
-                hb.svc = main.contains("svc=true");
-            }
-            readLastFire(file.getParentFile(), hb);
-            if (main == null) {
-                hb.detail = "只记录到子进程，还没记录到键盘进程\n共 " + procs.size() + " 个进程写过";
-                return hb;
-            }
-            hb.found = true;
-            hb.ageText = ageTextOf(main);
-            hb.detail = detailOf(main) + "\n共 " + procs.size() + " 个进程写过";
-            return hb;
-        } catch (Throwable t) {
-            hb.detail = "读取失败：" + t;
-            return hb;
-        }
-    }
-
-    /**
-     * 读执行结果日志的最后一行：「epochMillis 动作 result=分类」。
-     *
-     * <p>只取最后一行——设置页要回答的是"最近一次怎么样"，不是历史统计。
-     */
-    private static void readLastFire(File dir, Heartbeat hb) {
-        File file = new File(dir, Config.FIRE);
-        if (!file.exists() || file.length() == 0) {
-            return;
-        }
-        try {
-            RandomAccessFile raf = new RandomAccessFile(file, "r");
-            try {
-                long len = raf.length();
-                long start = Math.max(0, len - 4096);
-                raf.seek(start);
-                byte[] buf = new byte[(int) (len - start)];
-                raf.readFully(buf);
-                String tail = new String(buf, "UTF-8");
-                String last = null;
-                for (String line : tail.split("\\n")) {
-                    if (!line.trim().isEmpty()) {
-                        last = line.trim();
-                    }
-                }
-                if (last == null) {
-                    return;
-                }
-                String[] parts = last.split(" ", 3);
-                hb.fireResult = parts.length > 2 && parts[2].startsWith("result=")
-                        ? parts[2].substring("result=".length()) : null;
-                String action = parts.length > 1 ? parts[1] : "?";
-                String when = "";
-                try {
-                    when = new java.text.SimpleDateFormat("MM-dd HH:mm", Locale.US)
-                            .format(new java.util.Date(Long.parseLong(parts[0])));
-                } catch (Throwable ignored) {
-                    // 时间坏了只影响这一行的可读性
-                }
-                // 用逗号而不是括号：这句话后面会被嵌进状态句的括号里，套两层括号不好读。
-                hb.fireText = action + " → " + hb.fireResult + (when.isEmpty() ? "" : "，" + when);
-            } finally {
-                raf.close();
-            }
-        } catch (Throwable t) {
-            hb.fireText = "读取失败：" + t;
-        }
-    }
-
-    /** 心跳行是「epochMillis 进程名 pid=…」。 */
-    private static String ageTextOf(String line) {
-        String[] parts = line.split(" ", 3);
-        if (parts.length < 1) {
-            return "未知时间";
-        }
-        try {
-            long ageSec = (System.currentTimeMillis() - Long.parseLong(parts[0])) / 1000;
-            if (ageSec < 60) {
-                return "不到一分钟前";
-            }
-            if (ageSec < 3600) {
-                return (ageSec / 60) + " 分钟前";
-            }
-            if (ageSec < 86400) {
-                return (ageSec / 3600) + " 小时前";
-            }
-            return (ageSec / 86400) + " 天前";
-        } catch (Throwable t) {
-            return "未知时间";
-        }
-    }
-
-    /** 详情行：pid 与启动时刻。这两个值要字符对齐，所以走等宽。 */
-    private static String detailOf(String line) {
-        String[] parts = line.split(" ", 3);
-        String pid = parts.length > 2 ? parts[2] : "";
-        String time = "";
-        try {
-            long ms = Long.parseLong(parts[0]);
-            time = new java.text.SimpleDateFormat("MM-dd HH:mm:ss", Locale.US)
-                    .format(new java.util.Date(ms));
-        } catch (Throwable t) {
-            // 时间解析不出来只影响这一行的可读性，pid 照常显示。
-        }
-        return (pid.isEmpty() ? "" : pid + "，") + (time.isEmpty() ? "" : time + " 启动");
     }
 }

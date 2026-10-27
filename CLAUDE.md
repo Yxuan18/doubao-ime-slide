@@ -50,7 +50,7 @@ lane 配置在 `.claude/tdd-guardian/config.json`（门禁默认不自动拦截�
 
 ## 架构
 
-九个类，边界别混：
+十个类，边界别混：
 
 | 类 | 职责 |
 |---|---|
@@ -63,6 +63,7 @@ lane 配置在 `.claude/tdd-guardian/config.json`（门禁默认不自动拦截�
 | `Log` | 日志出口：`i` 受 `DEBUG` 控制、`always` 生命周期、`once` 预期内失败只打一次、`e` 异常带堆栈；`refresh()` 每根手指读一次配置，`heartbeat()` 供设置页显示注入状态 |
 | `Config` | 设置项的存储契约（prefs 名、键名、默认值）。模块 App 写、注入进程读，两端必须同名 |
 | `SettingsActivity` | 设置页：一个 DEBUG 开关 + 一屏诊断。跑在模块自己的进程里，不在豆包进程里 |
+| `Diagnostics` | 读心跳 / 执行结果两个诊断文件，解析成设置页能直接用的说法。不依赖 Activity，与 `Log` 一侧共同定义文件格式 |
 
 `GestureGate` 的判定（`FIRE`=60px、`GATE`=12px，视图高 909 时）：
 

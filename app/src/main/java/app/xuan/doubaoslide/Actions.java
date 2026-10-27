@@ -85,7 +85,11 @@ final class Actions {
             return XposedHelpers.callMethod(service, "getCurrentInputConnection")
                     instanceof InputConnection;
         } catch (Throwable t) {
-            return false;                   // 探测失败就当它没连接，可以淘汰
+            // 探测失败就当它没连接、可以淘汰；但要留痕，否则某个实例每次都抛异常时
+            // 表现是"它被静默淘汰了"，而日志里查不到原因。
+            Log.once("ic-probe-" + service.getClass().getName(),
+                    "hasConnection 探测失败，按无连接处理：" + t);
+            return false;
         }
     }
 

@@ -33,6 +33,24 @@ final class Log {
     /** 只在注入进程里可用；为 null 表示还没打开过。 */
     private static XSharedPreferences prefs;
 
+    /** 执行结果日志的写线程：唯一一条，守护线程，进程退出时不拖住。 */
+    private static final java.util.concurrent.ExecutorService FIRE_WRITER =
+            java.util.concurrent.Executors.newSingleThreadExecutor(
+                    new java.util.concurrent.ThreadFactory() {
+                        @Override
+                        public Thread newThread(Runnable r) {
+                            Thread t = new Thread(r, "doubao-slide-fire");
+                            t.setDaemon(true);
+                            return t;
+                        }
+                    });
+
+    /** 已排队未写完的条数。用来给写线程一个上限，别让积压无限增长。 */
+    private static final java.util.concurrent.atomic.AtomicInteger PENDING =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    private static final int MAX_PENDING = 8;
+
     private Log() {
     }
 
@@ -74,25 +92,31 @@ final class Log {
      * @param svc    动作通道是否接上（{@code ImeService} 的构造钩子装好）
      */
     static void heartbeat(String processName, boolean hooked, boolean svc) {
+        appendLine(Config.HEARTBEAT, System.currentTimeMillis() + " " + processName
+                        + " pid=" + android.os.Process.myPid()
+                        + " hooked=" + hooked + " svc=" + svc,
+                "heartbeat", "写心跳失败，设置页的「最近注入」会不准：");
+    }
+
+    /**
+     * 往共享目录里的诊断文件追加一行。
+     *
+     * <p>超过 {@link Config#LOG_WINDOW} 就从头写，避免长期累积。写失败只影响诊断显示。
+     */
+    private static void appendLine(String name, String line, String onceKey, String onceMsg) {
         try {
             File dir = prefsDir();
             if (dir == null) {
                 return;
             }
-            File hb = new File(dir, Config.HEARTBEAT);
-            long len = hb.length();
-            // 超过 4KB 就从头写，避免长期累积；正常情况下每次注入只有一行。
-            boolean append = len > 0 && len < 4096;
-            FileWriter w = new FileWriter(hb, append);
-            try {
-                w.write(System.currentTimeMillis() + " " + processName
-                        + " pid=" + android.os.Process.myPid()
-                        + " hooked=" + hooked + " svc=" + svc + "\n");
-            } finally {
-                w.close();
+            File file = new File(dir, name);
+            long len = file.length();
+            boolean append = len > 0 && len < Config.LOG_WINDOW;
+            try (FileWriter w = new FileWriter(file, append)) {
+                w.write(line + "\n");
             }
         } catch (Throwable t) {
-            once("heartbeat", "写心跳失败，设置页的「最近注入」会不准：" + t);
+            once(onceKey, onceMsg + t);
         }
     }
 
@@ -102,24 +126,30 @@ final class Log {
      * <p>结果分类见 {@link Actions#LAST_RESULT}。这里只负责落盘：与心跳同目录、
      * 同样的 4KB 截断策略。写失败只影响诊断显示，不影响手势。
      */
-    static void fire(String action, String result) {
+    static void fire(final String action, final String result) {
+        // 这条写在手势的收尾路径上，**跑在输入法 UI 线程**。同步写盘会让一次
+        // 刚触发的快捷键在抬手前多等一次 open/write/close，磁盘慢的时候就是卡顿。
+        // 所以丢给后台线程；积压到上限说明磁盘已经在拖，这时宁可丢一行诊断。
+        if (PENDING.get() >= MAX_PENDING) {
+            return;
+        }
+        PENDING.incrementAndGet();
         try {
-            File dir = prefsDir();
-            if (dir == null) {
-                return;
-            }
-            File f = new File(dir, Config.FIRE);
-            long len = f.length();
-            boolean append = len > 0 && len < 4096;
-            FileWriter w = new FileWriter(f, append);
-            try {
-                w.write(System.currentTimeMillis() + " " + action
-                        + " result=" + result + "\n");
-            } finally {
-                w.close();
-            }
+            FIRE_WRITER.execute(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        appendLine(Config.FIRE, System.currentTimeMillis() + " " + action
+                                        + " result=" + result,
+                                "fire-log", "写执行结果失败，设置页的「最近快捷键」会不准：");
+                    } finally {
+                        PENDING.decrementAndGet();
+                    }
+                }
+            });
         } catch (Throwable t) {
-            once("fire-log", "写执行结果失败，设置页的「最近快捷键」会不准：" + t);
+            PENDING.decrementAndGet();
+            once("fire-log", "提交执行结果失败，设置页的「最近快捷键」会不准：" + t);
         }
     }
 

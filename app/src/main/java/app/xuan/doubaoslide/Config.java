@@ -39,6 +39,14 @@ final class Config {
     static final String FIRE = "fire.log";
 
     /**
+     * 诊断日志的滚动窗口，字节。
+     *
+     * <p><b>写侧与读侧必须用同一个数</b>：写侧超过它就从头写，读侧只读末尾这么多。
+     * 两边不一致时读侧会切在半行上，解析出半个 {@code result=}，设置页就会误报。
+     */
+    static final int LOG_WINDOW = 4096;
+
+    /**
      * 配置文件缺失或读不到时的默认值。
      *
      * <p><b>发版前改回 {@code false}</b>：交付包默认应该是安静的，用户要日志自己去设置页打开。
