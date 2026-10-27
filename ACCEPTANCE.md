@@ -43,7 +43,7 @@
 | 设备 | Xiaomi 23116PN5BC（小米 14 Pro） |
 | 系统 | Android 16 / API 36 |
 | 豆包输入法 | `com.bytedance.android.doubaoime` 1.5.3（versionCode 100503006） |
-| 模块 | `app.xuan.doubaoslide`。第 1–16 项在 1.0.0 上测；第 17–20 项在 1.0.1（versionCode 2）上测；第 21–25 项在「1.0.1 + `GestureGate` 重构」上测；第 26–36 项在 1.0.1 + 后续修复上测；第 37–48 项在 1.1.0（versionCode 3，含设置页）上测 |
+| 模块 | `app.xuan.doubaoslide`。第 1–16 项在 1.0.0 上测；第 17–20 项在 1.0.1（versionCode 2）上测；第 21–25 项在「1.0.1 + `GestureGate` 重构」上测；第 26–36 项在 1.0.1 + 后续修复上测；第 37–49 项在 1.1.0（versionCode 3，含设置页）上测 |
 | LSPosed | 2.2.0-it（模块在管理器里带 “legacy” 标签） |
 | 键盘视图 | 1080×909，视图顶边在屏幕 y=1401 |
 
@@ -99,6 +99,7 @@
 | 46 | 几何顶部带按布局 XML 对上 | `cls_input_kbd_adaptive.padding1x="0,57,0,1.25"` 减去 `cls_input_kbd_inset_adaptive.inset` 的上内缩 4.75，设计单位 ×3.0（`min(屏宽,屏高)/360`，1080 宽即 3.0）→ 顶部 156.75 px、底部 3.75 px、行高 187.125。截屏逐像素核过：键面首行顶边在屏幕 1572（视图 171 = 156.75 + 上 margin 14.25），四行顶边 1572/1759/1946/2133，pitch 187。旧常数 151 / 189.5 分别差 5.75 / 2.38 px，已改成 156.75 / 187.125。另：视图 y=152–170 的点击不产生 `nativeTouch`（工具条/候选带吃掉），y=176 起正常 | 截屏像素扫描 + 布局 XML | A |
 | 47 | 长按浮层里左右选字 | 按住 C 1 秒（浮层已出）后：向左拖 180px 松手 → 输入框得到大写 `C`；向右拖 200px → 得到小写 `c`；同一手势改为下滑 150px → 仍 `手势 c -> copy ok=true dy=150 归还后触发`；轻点 → `补发手势：c moves=0 dy=0`。修复前 MOVE 全被扣住，横拖不改变提交结果 | modules.log + `uiautomator dump` | A |
 | 48 | doc/07「未证实」复核 | 候选栏点击与横滑：`nativeTouch` 0 条、`preHandleTouchEvent` 0 条（键区触摸每帧都有 `preHandle`）。换棋盘（字母 0 → 数字 5 → 字母 0）`handle` 恒为 `-5476376677671322144`。全量日志 action 统计：2=2796、0=201、1=192、−1=56、**3=1**；4/5/6 无样本。空格横滑不调用 `ShiftCursor`/`enterMoveCursorMode`（探针 0 次）。`enable_double_click_space` 默认 false，本机双击空格出两个空格 | modules.log + 只读探针（已删） | A（行为）/ B（实现） |
+| 49 | doc/08「未证实」复核 | 英文面 `kbd=2`（拼音 0 / 数字 5 / 符号 3 之外第四个锚点）。英文 123 键元素写 `target="8"`、拼音写 `target="9"`，两块棋盘实测都是 `kbd=5` —— class 侧 target 胜出。数字面 1/2 之间逐点：x=350/390/410/425 出 `1`，x=430 出 `2`，边界在键面右缘 426；行间空隙 y=1795 出下一行的 `4` —— 命中按格、留白归后一个键。`/data/data/…/files/data/skin` 不存在。更多候选面板点击产生 0 条 `nativeTouch`。`libkeyboard.so` 的 RTTI 无 `WubiLayout`/`HandwriteLayout`/`MoreSymbolLayout` | 真机手势 + `uiautomator dump` + 二进制符号 | A（行为）/ B（实现） |
 
 ## 四、未达标与受限项
 
