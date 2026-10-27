@@ -35,7 +35,7 @@ adb shell su -c 'grep -a DoubaoSlide /data/adb/lspd/log/modules_*.log | tail -5'
 lane 配置在 `.claude/tdd-guardian/config.json`（门禁默认不自动拦截）。
 
 **标定**：`nativeTouch` 收的是视图局部坐标（本机视图 1080×909、顶边在屏幕 y=1401）。
-每次手势测试先用 `Log.DEBUG=true` 构建，从 `DOWN <x>,<y> view=<w>x<h> 字母=<c>` 确认落键，
+每次手势测试先用 `Log.DEBUG=true` 构建，从 `DOWN <x>,<y> view=<w>x<h> kbd=<n> 字母=<c>` 确认落键与棋盘号，
 再谈结果——候选栏出现时键盘在**屏幕上**的位置会变，屏幕坐标不能直接当视图坐标用。
 
 `Log.DEBUG` 是**运行时开关**：装完 APK 从桌面图标打开设置页拨一下，**下一次按键就生效，

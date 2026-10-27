@@ -302,14 +302,18 @@ final class SlideHook {
         int h = view.getHeight();
 
         // 非 26 键字母面（数字面、符号面、表情面……）原样交给引擎。
-        if (!BoardGuard.isLetterBoard()) {
-            return;
-        }
-
-        char letter = Geometry.letterAt(x, y, w, h);
-        // DEBUG 期用来标定坐标：每个 DOWN 都记下视图尺寸和它落在哪个键上。
+        // 棋盘号跟着 DOWN 一起记：标定时要看清每块棋盘返回什么（已知 0/2/5，
+        // 符号面与表情面的取值一直没测过）。
+        int kbd = BoardGuard.kbdType();
+        boolean letterBoard = BoardGuard.isLetterBoard(kbd);
+        char letter = letterBoard ? Geometry.letterAt(x, y, w, h) : 0;
+        // DEBUG 期用来标定坐标：每个 DOWN 都记下视图尺寸、棋盘号和它落在哪个键上。
         if (Log.DEBUG) {
-            Log.i("DOWN " + x + "," + y + " view=" + w + "x" + h + " 字母=" + letter);
+            Log.i("DOWN " + x + "," + y + " view=" + w + "x" + h + " kbd=" + kbd
+                    + (letterBoard ? " 字母=" + letter : ""));
+        }
+        if (!letterBoard) {
+            return;
         }
         String action = SHORTCUTS.get(letter);
         if (GATE.onDown(y, h, action) != Verdict.CAPTURE) {

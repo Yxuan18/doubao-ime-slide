@@ -89,27 +89,41 @@ final class BoardGuard {
         return true;
     }
 
-    /** 当前棋盘是否是 26 键字母面；读不到就当作"不是"，交给引擎。 */
-    static boolean isLetterBoard() {
+    /** 读不到棋盘号时的返回值。不是引擎的合法取值（实测只有 0/2/5 一类非负数）。 */
+    static final int UNKNOWN = -1;
+
+    /**
+     * 当前棋盘号；读不到返回 {@link #UNKNOWN}。
+     *
+     * <p>判定与标定共用这一次调用：日志里看到的号必须是判定用的那个号，
+     * 否则"日志说 kbd=5、模块却武装了"这种矛盾要查很久。
+     */
+    static int kbdType() {
         Object target = instance;
         Method method = getCurrentKbdType;
         if (target == null || method == null) {
-            // 静默返回 false 会让"装上了但按键没反应"完全无线索：日志里只有注入行，
+            // 静默返回会让"装上了但按键没反应"完全无线索：日志里只有注入行，
             // 分不清是没装上、还是装上了没拿到引擎实例。这里补一条只打一次的线索。
             Log.once("board-guard",
                     "还没拿到 KeyboardJni 实例，本次触摸不武装（装了模块但按键没反应时看这条）");
-            return false;
+            return UNKNOWN;
         }
         try {
             Object value = method.invoke(target);
-            if (!(value instanceof Integer)) {
-                return false;
-            }
-            int type = (Integer) value;
-            return type == KBD_PINYIN_26 || type == KBD_ENGLISH_26;
+            return value instanceof Integer ? (Integer) value : UNKNOWN;
         } catch (Throwable t) {
-            Log.e("读取 getCurrentKbdType 失败", t);
-            return false;
+            Log.once("board-read", "读取 getCurrentKbdType 失败：" + t);
+            return UNKNOWN;
         }
+    }
+
+    /** 当前棋盘是否是 26 键字母面；读不到就当作"不是"，交给引擎。 */
+    static boolean isLetterBoard() {
+        return isLetterBoard(kbdType());
+    }
+
+    /** 同上，但棋盘号由调用方读过。 */
+    static boolean isLetterBoard(int type) {
+        return type == KBD_PINYIN_26 || type == KBD_ENGLISH_26;
     }
 }
