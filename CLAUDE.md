@@ -156,6 +156,14 @@ gh release create vX.Y.Z app/build/outputs/apk/release/app-release.apk \
 - 不往仓库或 release 里放打包好的第三方 APK（豆包本体、LSPatch 打出来的成品）。
 - 发布前核对：`versionName`/`versionCode`、`Log.DEBUG == false`、`ACCEPTANCE.md` 是否补了新行。
 
+## 输出风格
+
+- **结论先行。** 第一段就是答案，不铺垫过程、不复述刚做的操作。
+- **不重复已有记录。** 写进 `ACCEPTANCE.md` / `doc/` 的数据不再在对话里复述一遍。
+- **能一句说完的不写三段。** 汇报改动只需：改了什么、为什么、验没验。
+- **表格只在多列并排时用**，不要为了排版把两句话拆成表。
+- 需要用户拍板时，只问那一个具体问题，不做开放式征询。
+
 ## 执行要求
 
 - 先读文件，再动手。改动前先看 `ACCEPTANCE.md` 与相关 `doc/`。
