@@ -60,6 +60,16 @@ import static app.xuan.doubaoslide.GestureGate.ACTION_UP;
  */
 final class SlideHook {
 
+    /**
+     * 钩子到底挂上没。
+     *
+     * <p>装配失败时 {@link #install} 返回 false，但**光看返回值不够**：返回值只是
+     * "动作通道接上了没有"，钩子本身可能已经挂好。豆包升级后 {@code nativeTouch}
+     * 签名一变，{@link #install} 会在这里失败——那正是要告诉用户"版本不兼容"的时刻，
+     * 所以这个状态要能一路传到设置页。
+     */
+    static volatile boolean HOOKED;
+
     private static final String KEYBOARD_VIEW = "com.bytedance.android.input.keyboard.KeyboardView";
     private static final String IME_SERVICE = "com.bytedance.android.doubaoime.ImeService";
 
@@ -139,7 +149,10 @@ final class SlideHook {
 
         Method target = findNativeTouch(keyboardView);
         if (target == null) {
-            Log.w("找不到 nativeTouch(long,int,int,int,long)，模块未挂载");
+            // 最可能的原因：豆包升级改了 nativeTouch 的签名。日志里要点名，
+            // 否则用户只会看到"手势没反应"，猜不到是版本问题。
+            Log.w("找不到 nativeTouch(long,int,int,int,long)，模块未挂载"
+                    + "——豆包输入法可能已升级，钩子目标变了");
             return false;
         }
 
@@ -147,6 +160,7 @@ final class SlideHook {
             target.setAccessible(true);
             nativeTouch = target;
             XposedBridge.hookMethod(target, TOUCH_HOOK);
+            HOOKED = true;
         } catch (Throwable t) {
             Log.e("挂载 nativeTouch 失败", t);
             return false;

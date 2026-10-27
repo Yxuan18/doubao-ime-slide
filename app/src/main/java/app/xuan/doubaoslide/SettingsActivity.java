@@ -316,17 +316,33 @@ public class SettingsActivity extends Activity {
         boolean value = prefs.getBoolean(Config.KEY_DEBUG, Config.DEFAULT_DEBUG);
         Heartbeat hb = readHeartbeat(f);
 
-        statusView.setText(statusSentence(hb));
+        statusView.setText(statusSentence(hb, versionOf(IME_PKG)));
         // 没注入时这句要弱下来，别让人以为出现了错误；注入成功才是正文色。
         statusView.setTextColor(hb.found ? colorPrimary : colorSecondary);
 
         addRow("模块", versionOf(getPackageName()), false);
-        String ime = versionOf(IME_PKG);
-        addRow("豆包输入法", ime == null ? "未安装" : ime, false);
+        addRow("豆包输入法", imeRow(), false);
         addRow("当前值", stored ? (value ? "开，已保存" : "关，已保存")
                 : "还没写入过，用的是默认值", false);
         addRow("配置文件", configState(f), true);
         addRow("键盘进程", hb.detail, true);
+    }
+
+    /**
+     * 豆包版本那一行：装没装、版本对不对，一行说完。
+     *
+     * <p>不写"已验收 1.5.3"是因为用户看不出"没装"和"装了但版本对不上"的区别——
+     * 后者才是真正会让人白折腾的那种。写清楚比写"兼容"有用。
+     */
+    private String imeRow() {
+        String v = versionOf(IME_PKG);
+        if (v == null) {
+            return "未安装";
+        }
+        if (Config.VERIFIED_IME_VERSION.equals(v)) {
+            return v + "（已验收）";
+        }
+        return v + "（模块验收于 " + Config.VERIFIED_IME_VERSION + "，未验证）";
     }
 
     /**
@@ -335,7 +351,7 @@ public class SettingsActivity extends Activity {
      * <p>两种失败各说各的话：完全没注入，和注入了但配置文件读不到。后者更隐蔽——
      * 开关看起来拨了，键盘那边收不到。
      */
-    private String statusSentence(Heartbeat hb) {
+    private String statusSentence(Heartbeat hb, String imeVersion) {
         if (!hb.found) {
             return "还没有记录到模块注入键盘进程。在 LSPosed 里启用本模块、"
                     + "作用域勾上「豆包输入法」，然后重启一次输入法。";
@@ -344,6 +360,18 @@ public class SettingsActivity extends Activity {
         sb.append("模块已注入键盘进程，最后一次是 ").append(hb.ageText).append("。");
         if (!hb.configReadable) {
             sb.append("\n但配置文件读不到——开关改了也传不过去。");
+        }
+        // 钩子没挂上：这是最难查的一种坏法。进程在、手势不在，而"注入成功"这句话
+        // 会把人往错的方向引。必须单独说清楚。
+        if (hb.hookedKnown && !hb.hooked) {
+            sb.append("\n但手势钩子没挂上——豆包输入法可能已升级，"
+                    + "模块抓不到按键了。");
+        }
+        // 版本对不上要说在这句里，而不是只写在下面那行小字里：用户先看到的是这句。
+        if (imeVersion != null && !Config.VERIFIED_IME_VERSION.equals(imeVersion)) {
+            sb.append("\n豆包输入法是 ").append(imeVersion)
+                    .append("，模块验收的是 ").append(Config.VERIFIED_IME_VERSION)
+                    .append("——手势可能不工作。");
         }
         return sb.toString();
     }
@@ -395,6 +423,10 @@ public class SettingsActivity extends Activity {
         String detail = "无记录（模块可能还没注入过）";
         /** 配置文件此刻读不读得到。两种失败要在状态句里说成不同的话。 */
         boolean configReadable;
+        /** 钩子挂上了没有。false = 豆包可能已升级，钩子目标变了。 */
+        boolean hooked = true;
+        /** 旧版心跳没有 hooked= 字段，这时不能判"没挂上"，只能说不知道。 */
+        boolean hookedKnown;
     }
 
     /**
@@ -445,6 +477,11 @@ public class SettingsActivity extends Activity {
                 if (IME_PKG.equals(parts[1])) {
                     main = s;               // 主进程：键盘在这里
                 }
+            }
+            // 钩子状态从主进程那一行里取。第三段形如 "pid=123 hooked=true"。
+            if (main != null) {
+                hb.hookedKnown = true;
+                hb.hooked = main.contains("hooked=true");
             }
             if (main == null) {
                 hb.detail = "只记录到子进程，还没记录到键盘进程\n共 " + procs.size() + " 个进程写过";

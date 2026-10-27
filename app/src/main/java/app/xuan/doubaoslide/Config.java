@@ -29,6 +29,17 @@ final class Config {
     static final String HEARTBEAT = "heartbeat.log";
 
     /**
+     * 模块验收过的豆包输入法版本。
+     *
+     * <p>钩的是 {@code KeyboardView.nativeTouch(long,int,int,int,long)} 这个**具体签名**，
+     * 豆包一改它，模块就挂不上——而且是**静默**的：进程照常注入，键盘照常能用，
+     * 只是手势没了。用户看到的是"功能坏了"，不是"版本不兼容"。
+     *
+     * <p>所以设置页要比对版本，并对不上时明说。这不是要锁死版本，是要让不兼容可见。
+     */
+    static final String VERIFIED_IME_VERSION = "1.5.3";
+
+    /**
      * 配置文件缺失或读不到时的默认值。
      *
      * <p><b>发版前改回 {@code false}</b>：交付包默认应该是安静的，用户要日志自己去设置页打开。

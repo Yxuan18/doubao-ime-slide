@@ -64,8 +64,15 @@ final class Log {
      *
      * <p>注入进程与模块 App 是两个 UID，唯一的共用可写位置就是共享 prefs 目录里的
      * 这个文件（设置页会把它预建成 0666）。写失败只影响诊断显示，不影响手势。
+     *
+     * <p><b>第三段是"钩子挂上了吗"。</b>前两段只说明"这个进程被注入了"，
+     * 而豆包升级后 {@code nativeTouch} 签名一变，进程照常注入、键盘照常能用，
+     * 只是手势没了——那是最难查的一种坏法。所以心跳要记下钩子的状态，
+     * 让设置页能区分"没注入"和"注入了但钩子没挂上"。
+     *
+     * @param hooked 钩子是否真的挂上了（{@code nativeTouch} 找到并 hook 成功）
      */
-    static void heartbeat(String processName) {
+    static void heartbeat(String processName, boolean hooked) {
         try {
             File dir = prefsDir();
             if (dir == null) {
@@ -78,7 +85,7 @@ final class Log {
             FileWriter w = new FileWriter(hb, append);
             try {
                 w.write(System.currentTimeMillis() + " " + processName
-                        + " pid=" + android.os.Process.myPid() + "\n");
+                        + " pid=" + android.os.Process.myPid() + " hooked=" + hooked + "\n");
             } finally {
                 w.close();
             }

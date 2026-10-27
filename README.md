@@ -72,13 +72,19 @@ map.put('v', "paste");
 `Geometry.java`：
 
 ```java
-static final float GATE_FRAC = 12f / 909f;   // 超过它才算滑动
-static final float FIRE_FRAC = 60f / 909f;   // 超过它才触发快捷键
-private static final float STRIP_FRAC = 151f / 909f;  // 顶部候选栏/工具条占比
+static final float GATE_FRAC = 12f / 909f;    // 超过它才算滑动
+static final float FIRE_FRAC = 60f / 909f;    // 超过它才触发快捷键
+private static final float TOP_FRAC = 156.75f / 909f;     // 顶部非键区（键框顶）
+private static final float BOTTOM_FRAC = 3.75f / 909f;    // 底部内边距
 ```
 
-三个值都按视图高度做成比例，换分辨率自动缩放。键位横向权重写在同一个文件的
+四个值都按视图高度做成比例，换分辨率自动缩放。键位横向权重写在同一个文件的
 `ROW1` / `ROW2_MID` / `ROW3_MID` 与 `LEFT_BIG` / `RIGHT_BIG` 里。
+
+`TOP_FRAC` 是从豆包的布局资源推出来的：棋盘类的 `padding1x` 上边距 57 减去
+`inset` 的上内缩 4.75，得 52.25 个设计单位；设计单位 × 3.0（`min(屏宽,屏高)/360`）
+= 156.75 px。它是**键框**的顶边，不是键面（键面在 171）。改这个值之前先看
+`doc/08-逆向-布局棋盘与皮肤.md` §3。
 
 ## 设置页
 

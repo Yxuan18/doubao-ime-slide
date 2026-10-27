@@ -16,27 +16,30 @@ export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools   # 需要 plat
 # 产物：app/build/outputs/apk/release/app-release.apk
 
 adb install -r app/build/outputs/apk/release/app-release.apk
-adb shell su -c 'am force-stop com.bytedance.android.doubaoime'
-adb shell su -c 'ime set com.bytedance.android.doubaoime/.ImeService'
-adb shell su -c 'grep -a DoubaoSlide /data/adb/lspd/log/modules_*.log | tail -5'
+sh tools/adb-root.sh 'am force-stop com.bytedance.android.doubaoime'
+sh tools/adb-root.sh 'ime set com.bytedance.android.doubaoime/.ImeService'
+sh tools/adb-root.sh 'ls -t /data/adb/lspd/log/modules_*.log | head -1'
 ```
 
-三个必须记住的：`su -c` 里别套引号和转义；force-stop 之后必须紧跟 `ime set`，否则键盘没了；
-**重装 APK 不会重载代码**，输入法进程必须重启。展开与其它坑见 `doc/02-调试与验收手册.md`。
+四个必须记住的：`su -c` 里别套引号和转义；force-stop 之后必须紧跟 `ime set`，否则键盘没了；
+**重装 APK 不会重载代码**，输入法进程必须重启；**设备会掉线**，用 `tools/adb-root.sh`
+而不是裸 `adb shell`（它会等设备回来再执行）。
+展开与其它坑见 `doc/02-调试与验收手册.md`。
 
 ## 验收
 
 **手势行为没有自动化测试，也没接 CI。** 唯一验收是真机手势 + 模块日志 + 控件树，
 结论和证据等级写进 `ACCEPTANCE.md`。**改任何手势行为，都在那里补一行实测记录。**
 
-纯 JVM 的判定与几何有单元测试（`GestureGateTest` 28 项 + `GeometryTest` 11 项），
+纯 JVM 的判定与几何有单元测试（`GestureGateTest` 32 项 + `GeometryTest` 11 项），
 跑 `./gradlew :app:testDebugUnitTest`。它们锁五段判定（含多指、死区、阈值边界、LEAVE 语义）
 和真机实测过的坐标命中；**不覆盖**反射、`InputConnection`、渲染，绿了也不代表手势对。
 lane 配置在 `.claude/tdd-guardian/config.json`（门禁默认不自动拦截）。
 
 **标定**：`nativeTouch` 收的是视图局部坐标（本机视图 1080×909、顶边在屏幕 y=1401）。
 每次手势测试先用 `Log.DEBUG=true` 构建，从 `DOWN <x>,<y> view=<w>x<h> kbd=<n> 字母=<c>` 确认落键与棋盘号，
-再谈结果——候选栏出现时键盘在**屏幕上**的位置会变，屏幕坐标不能直接当视图坐标用。
+再谈结果——屏幕坐标不能直接当视图坐标用（视图顶边实测恒为屏幕 y=1401、高度 909，
+候选栏出现时也不变，见 `doc/08` §6）。
 
 `Log.DEBUG` 是**运行时开关**：装完 APK 从桌面图标打开设置页拨一下，**下一次按键就生效，
 不需要重启输入法**。配置文件读不到时回落到 `Config.DEFAULT_DEBUG`——**发版前把它改成 `false`**，
@@ -91,6 +94,26 @@ maxDy > FIRE                      触发快捷键（带触感）
 2. **补发必须整段，不能压平成 DOWN+UP。** 压平后引擎只能判成轻点，**上滑输符号会失效**——这是 `v1.0.0` 修掉的回退项，细节见 `doc/05-历史修复记录.md` 第 4 节。
 3. **反射调用 `nativeTouch` 会再次进入钩子。** 必须用 `ThreadLocal REPLAYING` 放行，否则补发的 DOWN 被自己再扣一次，死循环。
 
+## 版本护栏
+
+模块钩的是 `KeyboardView.nativeTouch(long,int,int,int,long)` 这个**具体签名**。豆包一改它，
+模块就挂不上——而且是**静默**的：进程照常注入，键盘照常能用，只是手势没了。
+用户看到的是"功能坏了"，不是"版本不兼容"。
+
+所以有两道护栏，缺一不可：
+
+| 护栏 | 位置 | 作用 |
+|---|---|---|
+| 心跳带 `hooked=` | `Log.heartbeat(processName, hooked)`，由 `SlideHook.HOOKED` 决定 | 设置页能区分「没注入」和「注入了但钩子没挂上」 |
+| 版本比对 | `Config.VERIFIED_IME_VERSION`（当前 1.5.3），设置页比对 `PackageManager` 读的版本 | 版本对不上时状态句直接说"手势可能不工作" |
+
+**心跳必须写在装配之后。** 写在前面的话，豆包升级导致签名变了也会记成"已注入"，
+设置页就会显示一切正常——护栏自己失效。`XposedEntry` 里因此把心跳挪到了
+`SlideHook.install()` 之后，并且异常路径单独写一条 `hooked=false`。
+改了装配顺序时记得同步这条。
+
+升级豆包后的第一件事：看设置页的「键盘进程」那行有没有 `hooked=true`。
+
 ## 硬约束
 
 - **只用 legacy Xposed API 82**：`XposedBridge.hookMethod/hookAllConstructors`、`XposedHelpers.*`、`param.setResult(null)`。libxposed 现代 API 按设计**不提供 `XposedHelpers`**，迁移不是换依赖那么简单（见 `ACCEPTANCE.md` 开放问题）。
@@ -127,6 +150,14 @@ gh release create vX.Y.Z app/build/outputs/apk/release/app-release.apk \
 - 不往仓库或 release 里放打包好的第三方 APK（豆包本体、LSPatch 打出来的成品）。
 - 发布前核对：`versionName`/`versionCode`、`Log.DEBUG == false`、`ACCEPTANCE.md` 是否补了新行。
 
+## 执行要求
+
+- 先读文件，再动手。改动前先看 `ACCEPTANCE.md` 与相关 `doc/`。
+- 倾向编辑，不倾向重写。
+- **声称完成前必须测试**：改 `.java` 至少跑 `./gradlew :app:testDebugUnitTest`，
+  改手势行为还必须真机跑一遍并补 `ACCEPTANCE.md` 一行。
+- 用户指令始终优先于此文件。
+
 ## 证据与文档
 
 - `ACCEPTANCE.md`：验收线、逐项实测与证据等级、回退项与根因、被放弃的方案、开放问题。**动手改手势行为之前先读它。**
@@ -148,3 +179,5 @@ gh release create vX.Y.Z app/build/outputs/apk/release/app-release.apk \
 | `doc/09-逆向-文本与编辑能力面.md` | 剪贴板历史/常用语/清空；撤销无效的源码解释 |
 | `doc/10-逆向-架构与工程借鉴.md` | Java/native 分工、混淆策略、179 MB 的真实体积分布 |
 | `doc/11-逆向-用户体验观察.md` | 豆包的设置体系与反馈设计；模块与原生行为的四处不一致 |
+
+`tools/adb-root.sh`：等设备回来再执行一条 root shell 命令（USB 会掉线）。

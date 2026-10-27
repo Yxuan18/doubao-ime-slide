@@ -30,19 +30,25 @@ public final class XposedEntry implements IXposedHookLoadPackage {
         // 先占位再装配：同一进程里可能有多份 ClassLoader，装两次就会有两套静态状态
         // （手势状态、连接列表各一份），所以标志必须在装配之前立起来。
         System.setProperty(HOOK_FLAG, "1");
-        boolean board;
-        boolean slide;
+        boolean board = false;
+        boolean slide = false;
+        boolean failed = false;
         try {
             Log.always("注入 " + lpparam.processName + " pid=" + Process.myPid());
-            // 先把设置读进来，再记心跳：设置页靠心跳回答"模块到底有没有注入"。
+            // 先把设置读进来：设置页靠它决定日志开不开。
             Log.refresh();
-            Log.heartbeat(lpparam.processName);
             board = BoardGuard.install(lpparam.classLoader);
             slide = SlideHook.install(lpparam.classLoader);
         } catch (Throwable t) {
             // 抛出说明装配还没走完（多半在找类那一步），撤掉标志允许后续重试。
             System.clearProperty(HOOK_FLAG);
             Log.e("模块初始化失败", t);
+            failed = true;
+        }
+        if (failed) {
+            // 心跳仍然要写：设置页得知道"这个进程来过，但没装成"。
+            // 漏写的话，页面会显示"没注入过"，而真相是"装崩了"——两回事。
+            Log.heartbeat(lpparam.processName, false);
             return;
         }
         if (!board || !slide) {
@@ -52,5 +58,9 @@ public final class XposedEntry implements IXposedHookLoadPackage {
             Log.w("模块未完整装配：棋盘守卫=" + board + " 手势闸门=" + slide
                     + "，标志保留、不再重装");
         }
+        // 心跳写在装配**之后**：它要带"钩子挂上了没有"这个状态。
+        // 写在前面的话，豆包升级导致签名变了也会记成"已注入"，
+        // 设置页就会显示一切正常，而手势其实已经不工作。
+        Log.heartbeat(lpparam.processName, SlideHook.HOOKED);
     }
 }
