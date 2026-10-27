@@ -54,6 +54,18 @@ final class GestureGate {
      */
     static final long HAND_BACK_MS = 300L;
 
+    /**
+     * 归还之后，横向移动超过这个距离就判定用户是在长按浮层里选字，把这一下整个交给引擎。
+     *
+     * <p>为什么需要：浮层出现后，豆包自己的行为是左右拖动切换「大写 / 字符 / 小写」。
+     * 模块归还 DOWN 之后仍然扣着 MOVE，引擎看不到拖动，选中项就不会变——用户看到的是
+     * "C 的浮层画出来了，但选不中"。24px 取在手指横向抖动（通常 <12px）与真实拖动之间。
+     *
+     * <p>一旦交给引擎，这一下就不能再触发快捷键：引擎已经见过 MOVE，再发 CANCEL 撤不干净
+     * （实测：见过 MOVE 后 CANCEL 不会让候选栏回到空白）。两条路互斥，由第一个明显位移决定。
+     */
+    static final float PICK_FRAC = 24f / 909f;
+
     /** 一条事件处理完之后，调用方该做什么。 */
     enum Verdict {
         /** 引擎的事，原样放行。 */
@@ -73,9 +85,13 @@ final class GestureGate {
     private boolean deferred;
     private boolean multiPointer;
     private boolean handedBack;
+    /** 归还之后用户开始横向拖动：这一下归引擎，模块不再触发也不再补发。 */
+    private boolean engineOwned;
+    private int x0;
     private int y0;
     private int h;
     private int maxDy;
+    private int curDx;
 
     /**
      * 第一根手指按下。
@@ -86,15 +102,21 @@ final class GestureGate {
      *                   「当前是不是 26 键字母面」由调用方先判（那里要靠反射问引擎），
      *                   这里只认这个键有没有绑定动作。
      */
-    Verdict onDown(int y, int h, String actionName) {
+    Verdict onDown(int x, int y, int h, String actionName) {
         reset();
         if (actionName == null) {
             return Verdict.PASS;
         }
         deferred = true;
+        this.x0 = x;
         this.y0 = y;
         this.h = h;
         return Verdict.CAPTURE;
+    }
+
+    /** 不关心横向位移的调用方（判定测试）用这个。 */
+    Verdict onDown(int y, int h, String actionName) {
+        return onDown(0, y, h, actionName);
     }
 
     /**
@@ -112,6 +134,17 @@ final class GestureGate {
      * 浮层的第二格；未归还时吞掉（引擎根本没收到过 DOWN，没有东西可收尾）。
      */
     Verdict onEvent(int action, int y) {
+        return onEvent(action, x0, y);
+    }
+
+    /**
+     * 带横向坐标的版本。
+     *
+     * <p>归还之后有一条额外的出路：横向拖动超过 {@link #pickAt()} 就认为用户在长按
+     * 浮层里选字，{@code PASS} 让引擎看到后面的所有事件。此时 {@link #deferred()} 变 false，
+     * 抬手时不会再触发快捷键。
+     */
+    Verdict onEvent(int action, int x, int y) {
         if (!deferred) {
             return Verdict.PASS;
         }
@@ -123,7 +156,15 @@ final class GestureGate {
             multiPointer = true;
         }
         if (!multiPointer) {
-            track(y);
+            track(x, y);
+        }
+        if (handedBack && !engineOwned
+                && Math.abs(curDx) >= pickAt() && Math.abs(curDx) > Math.abs(maxDy)) {
+            // 长按浮层里左右选字：这一下从此归引擎。不触发快捷键，也不补发——
+            // 引擎手里已经有 DOWN，它会按自己的规则把选中的字符提交上去。
+            engineOwned = true;
+            deferred = false;
+            return Verdict.PASS;
         }
         return Verdict.CAPTURE;
     }
@@ -157,16 +198,26 @@ final class GestureGate {
      * {@link #gateAt()} / {@link #handedBack()} 仍读得到这次手势的值，直到调用方 {@link #reset()}。
      */
     Verdict onUp(int y) {
+        return onUp(x0, y);
+    }
+
+    Verdict onUp(int x, int y) {
         if (!deferred) {
             return Verdict.PASS;
         }
         if (!multiPointer) {
-            track(y);
+            track(x, y);
         }
         deferred = false;
 
         if (multiPointer) {
             return Verdict.REPLAY;
+        }
+        if (handedBack && Math.abs(curDx) >= pickAt() && Math.abs(curDx) > Math.abs(maxDy)) {
+            // 归还后在浮层里横拖过、然后直接抬手（中间没再来 MOVE）：这一下是选字，
+            // 不是快捷键。交给引擎，不触发也不补发。
+            engineOwned = true;
+            return Verdict.PASS;
         }
         if (maxDy > fireAt()) {
             return Verdict.FIRE;
@@ -202,19 +253,33 @@ final class GestureGate {
         return Math.round(h * Geometry.GATE_FRAC);
     }
 
+    /** 长按浮层里"开始横向选字"的横向门槛（实测 909 高时 24px）。 */
+    int pickAt() {
+        return Math.round(h * PICK_FRAC);
+    }
+
+    /** 这一下是否已经交给引擎去处理长按选字。 */
+    boolean engineOwned() {
+        return engineOwned;
+    }
+
     void reset() {
         deferred = false;
         multiPointer = false;
         handedBack = false;
+        engineOwned = false;
         maxDy = 0;
+        curDx = 0;
+        x0 = 0;
         y0 = 0;
         h = 0;
     }
 
-    private void track(int y) {
+    private void track(int x, int y) {
         int dy = y - y0;
         if (dy > maxDy) {
             maxDy = dy;
         }
+        curDx = x - x0;
     }
 }

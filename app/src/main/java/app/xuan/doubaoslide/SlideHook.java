@@ -260,7 +260,7 @@ final class SlideHook {
 
         if (action == ACTION_UP) {
             cancelHandBack();
-            Verdict verdict = GATE.onUp(y);
+            Verdict verdict = GATE.onUp(x, y);
             if (verdict != Verdict.PASS) {
                 finish(param, x, y, time, verdict);
             }
@@ -270,8 +270,13 @@ final class SlideHook {
         // "该吞还是该放"只由 GestureGate 一处决定。这里不再自己判断 LEAVE，
         // 否则判据会读到一个刚被自己改写的状态（那个写法曾让"先滑过触发线、
         // 再停住"的手势静默失效）。
-        Verdict verdict = GATE.onEvent(action, y);
+        boolean ownedBefore = GATE.engineOwned();
+        Verdict verdict = GATE.onEvent(action, x, y);
         if (verdict == Verdict.PASS) {
+            if (!ownedBefore && GATE.engineOwned() && Log.DEBUG) {
+                // 长按浮层里开始横向选字：这一下从此归引擎，模块不再扣事件、不再触发。
+                Log.i("长按选字：横向拖动交给引擎 " + x + "," + y + " maxDy=" + GATE.maxDy());
+            }
             return;                         // 不是我们扣下的手势（含已归还时的 LEAVE），一律放行
         }
         // LEAVE 不进补发缓冲：它不是手指的位移，补发回去只会让引擎把它当成一次抖动。
@@ -316,7 +321,7 @@ final class SlideHook {
             return;
         }
         String action = SHORTCUTS.get(letter);
-        if (GATE.onDown(y, h, action) != Verdict.CAPTURE) {
+        if (GATE.onDown(x, y, h, action) != Verdict.CAPTURE) {
             return;                         // 未映射的键，引擎全看
         }
 

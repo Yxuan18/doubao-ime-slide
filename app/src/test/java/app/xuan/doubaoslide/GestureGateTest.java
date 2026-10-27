@@ -268,6 +268,54 @@ public class GestureGateTest {
         assertFalse(gate.handedBack());
     }
 
+    // ---------- 长按浮层里左右选字：用户报告的 bug（C 的浮层选不中） ----------
+
+    @Test
+    public void sidewaysAfterHandbackHandsGestureToEngine() {
+        // 浮层出现后左右拖动是豆包自己的选字手势。模块归还 DOWN 之后如果继续扣着 MOVE，
+        // 引擎看不到拖动，选中项就不会变。超过 pickAt 且横向为主 → 整段交给引擎。
+        GestureGate gate = new GestureGate();
+        gate.onDown(100, Y_C, H, "copy");
+        assertEquals(Verdict.HANDBACK, gate.onHandback());
+        assertEquals(Verdict.PASS, gate.onEvent(2, 100 + 40, Y_C + 3));
+        assertFalse("交给引擎之后不能再扣事件", gate.deferred());
+        assertTrue(gate.engineOwned());
+        assertEquals("抬手也不能触发快捷键，引擎要自己提交选中的字",
+                Verdict.PASS, gate.onUp(Y_C + 3));
+    }
+
+    @Test
+    public void smallJitterAfterHandbackStaysCaptured() {
+        // 10px 横向抖动不是选字，别把快捷键路径让出去。
+        GestureGate gate = new GestureGate();
+        gate.onDown(100, Y_C, H, "copy");
+        gate.onHandback();
+        assertEquals(Verdict.CAPTURE, gate.onEvent(2, 100 + 10, Y_C));
+        assertFalse(gate.engineOwned());
+        assertTrue(gate.deferred());
+    }
+
+    @Test
+    public void downwardDoesNotCountAsPicking() {
+        // 斜着往下走不算选字：横向虽然超过 pickAt，但纵向更大。
+        GestureGate gate = new GestureGate();
+        gate.onDown(100, Y_C, H, "copy");
+        gate.onHandback();
+        assertEquals(Verdict.CAPTURE, gate.onEvent(2, 100 + 40, Y_C + 80));
+        assertFalse(gate.engineOwned());
+        assertEquals(Verdict.FIRE, gate.onUp(Y_C + 90));
+    }
+
+    @Test
+    public void sidewaysBeforeHandbackDoesNotOwn() {
+        // 还没归还时横滑是"补发"路径的事，不该被选字逻辑截走。
+        GestureGate gate = new GestureGate();
+        gate.onDown(100, Y_C, H, "copy");
+        assertEquals(Verdict.CAPTURE, gate.onEvent(2, 160, Y_C));
+        assertFalse(gate.engineOwned());
+        assertTrue(gate.deferred());
+    }
+
     @Test
     public void resetClearsHandback() {
         GestureGate gate = new GestureGate();
