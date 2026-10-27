@@ -48,7 +48,7 @@ public final class XposedEntry implements IXposedHookLoadPackage {
         if (failed) {
             // 心跳仍然要写：设置页得知道"这个进程来过，但没装成"。
             // 漏写的话，页面会显示"没注入过"，而真相是"装崩了"——两回事。
-            Log.heartbeat(lpparam.processName, false);
+            Log.heartbeat(lpparam.processName, false, false);
             return;
         }
         if (!board || !slide) {
@@ -61,6 +61,6 @@ public final class XposedEntry implements IXposedHookLoadPackage {
         // 心跳写在装配**之后**：它要带"钩子挂上了没有"这个状态。
         // 写在前面的话，豆包升级导致签名变了也会记成"已注入"，
         // 设置页就会显示一切正常，而手势其实已经不工作。
-        Log.heartbeat(lpparam.processName, SlideHook.HOOKED);
+        Log.heartbeat(lpparam.processName, SlideHook.HOOKED, slide);
     }
 }

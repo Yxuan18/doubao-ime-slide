@@ -71,8 +71,9 @@ final class Log {
      * 让设置页能区分"没注入"和"注入了但钩子没挂上"。
      *
      * @param hooked 钩子是否真的挂上了（{@code nativeTouch} 找到并 hook 成功）
+     * @param svc    动作通道是否接上（{@code ImeService} 的构造钩子装好）
      */
-    static void heartbeat(String processName, boolean hooked) {
+    static void heartbeat(String processName, boolean hooked, boolean svc) {
         try {
             File dir = prefsDir();
             if (dir == null) {
@@ -85,12 +86,40 @@ final class Log {
             FileWriter w = new FileWriter(hb, append);
             try {
                 w.write(System.currentTimeMillis() + " " + processName
-                        + " pid=" + android.os.Process.myPid() + " hooked=" + hooked + "\n");
+                        + " pid=" + android.os.Process.myPid()
+                        + " hooked=" + hooked + " svc=" + svc + "\n");
             } finally {
                 w.close();
             }
         } catch (Throwable t) {
             once("heartbeat", "写心跳失败，设置页的「最近注入」会不准：" + t);
+        }
+    }
+
+    /**
+     * 记一行快捷键执行结果，供设置页判断「模块还可用吗」。
+     *
+     * <p>结果分类见 {@link Actions#LAST_RESULT}。这里只负责落盘：与心跳同目录、
+     * 同样的 4KB 截断策略。写失败只影响诊断显示，不影响手势。
+     */
+    static void fire(String action, String result) {
+        try {
+            File dir = prefsDir();
+            if (dir == null) {
+                return;
+            }
+            File f = new File(dir, Config.FIRE);
+            long len = f.length();
+            boolean append = len > 0 && len < 4096;
+            FileWriter w = new FileWriter(f, append);
+            try {
+                w.write(System.currentTimeMillis() + " " + action
+                        + " result=" + result + "\n");
+            } finally {
+                w.close();
+            }
+        } catch (Throwable t) {
+            once("fire-log", "写执行结果失败，设置页的「最近快捷键」会不准：" + t);
         }
     }
 

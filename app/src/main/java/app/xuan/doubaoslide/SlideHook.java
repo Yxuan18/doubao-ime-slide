@@ -368,6 +368,8 @@ final class SlideHook {
                     Actions.haptic((View) param.thisObject);
                 }
                 boolean ok = Actions.perform(g.action);
+                // 执行结果落盘：设置页靠它回答"模块还可用吗"。分类见 Actions.LAST_RESULT。
+                Log.fire(g.action, Actions.LAST_RESULT);
                 if (Log.DEBUG) {
                     Log.i("手势 " + g.letter + " -> " + g.action + " ok=" + ok
                             + " dy=" + GATE.maxDy() + " (fire>" + GATE.fireAt() + ")"

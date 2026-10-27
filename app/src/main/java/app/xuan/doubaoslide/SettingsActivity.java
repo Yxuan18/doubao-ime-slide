@@ -259,17 +259,24 @@ public class SettingsActivity extends Activity {
             return;
         }
         f.setReadable(true, false);                     // 0644：让豆包进程能读
-        File hb = new File(f.getParentFile(), Config.HEARTBEAT);
-        if (!hb.exists()) {
+        // 两个诊断文件都得预建成 0666：共享目录是 0755，输入法进程（另一个 UID）
+        // 建不了新文件，只能往已存在的文件里追加。
+        ensureShared(f.getParentFile(), Config.HEARTBEAT, "心跳");
+        ensureShared(f.getParentFile(), Config.FIRE, "执行结果");
+    }
+
+    private void ensureShared(File dir, String name, String what) {
+        File file = new File(dir, name);
+        if (!file.exists()) {
             try {
-                hb.createNewFile();
+                file.createNewFile();
             } catch (Throwable t) {
                 // 建不出来时下面的 setX 也会失败，诊断区会把状态显示出来；这里留一行记录。
-                android.util.Log.w(TAG, "创建心跳文件失败：" + t);
+                android.util.Log.w(TAG, "创建" + what + "文件失败：" + t);
             }
         }
-        hb.setReadable(true, false);
-        hb.setWritable(true, false);                    // 0666：豆包进程要往里追加心跳
+        file.setReadable(true, false);
+        file.setWritable(true, false);                  // 0666：豆包进程要往里追加
     }
 
     /** 首屏就把心跳文件准备好，否则注入进程没有可写的目标。 */
@@ -316,42 +323,32 @@ public class SettingsActivity extends Activity {
         boolean value = prefs.getBoolean(Config.KEY_DEBUG, Config.DEFAULT_DEBUG);
         Heartbeat hb = readHeartbeat(f);
 
-        statusView.setText(statusSentence(hb, versionOf(IME_PKG)));
+        statusView.setText(statusSentence(hb));
         // 没注入时这句要弱下来，别让人以为出现了错误；注入成功才是正文色。
         statusView.setTextColor(hb.found ? colorPrimary : colorSecondary);
 
         addRow("模块", versionOf(getPackageName()), false);
-        addRow("豆包输入法", imeRow(), false);
+        String ime = versionOf(IME_PKG);
+        addRow("豆包输入法", ime == null ? "未安装" : ime, false);
         addRow("当前值", stored ? (value ? "开，已保存" : "关，已保存")
                 : "还没写入过，用的是默认值", false);
+        addRow("最近快捷键", hb.fireText == null ? "还没有执行过" : hb.fireText, true);
         addRow("配置文件", configState(f), true);
         addRow("键盘进程", hb.detail, true);
     }
 
     /**
-     * 豆包版本那一行：装没装、版本对不对，一行说完。
+     * 页面最上面那句话：模块此刻**能不能干活**。
      *
-     * <p>不写"已验收 1.5.3"是因为用户看不出"没装"和"装了但版本对不上"的区别——
-     * 后者才是真正会让人白折腾的那种。写清楚比写"兼容"有用。
-     */
-    private String imeRow() {
-        String v = versionOf(IME_PKG);
-        if (v == null) {
-            return "未安装";
-        }
-        if (Config.VERIFIED_IME_VERSION.equals(v)) {
-            return v + "（已验收）";
-        }
-        return v + "（模块验收于 " + Config.VERIFIED_IME_VERSION + "，未验证）";
-    }
-
-    /**
-     * 页面最上面那句话：模块现在到底在不在键盘里。
+     * <p>不拿版本号当判据——版本是代理信号，豆包每发一个小版本就误报，
+     * 而手势未必真的坏了。这里只用输入法进程报上来的运行时事实：
+     * 钩子挂上没、动作通道接上没、上一次快捷键执行到了哪一步。
      *
-     * <p>两种失败各说各的话：完全没注入，和注入了但配置文件读不到。后者更隐蔽——
-     * 开关看起来拨了，键盘那边收不到。
+     * <p>四种失败各说各的话，因为修法完全不同：
+     * 没注入要去 LSPosed 里开；钩子没挂上说明豆包改了钩子目标；
+     * 动作通道没接上说明 ImeService 变了；执行失败说明调用链断了。
      */
-    private String statusSentence(Heartbeat hb, String imeVersion) {
+    private String statusSentence(Heartbeat hb) {
         if (!hb.found) {
             return "还没有记录到模块注入键盘进程。在 LSPosed 里启用本模块、"
                     + "作用域勾上「豆包输入法」，然后重启一次输入法。";
@@ -361,19 +358,30 @@ public class SettingsActivity extends Activity {
         if (!hb.configReadable) {
             sb.append("\n但配置文件读不到——开关改了也传不过去。");
         }
-        // 钩子没挂上：这是最难查的一种坏法。进程在、手势不在，而"注入成功"这句话
-        // 会把人往错的方向引。必须单独说清楚。
+        // 钩子没挂上：进程在、手势不在，而"注入成功"这句话会把人往错的方向引。
         if (hb.hookedKnown && !hb.hooked) {
-            sb.append("\n但手势钩子没挂上——豆包输入法可能已升级，"
-                    + "模块抓不到按键了。");
-        }
-        // 版本对不上要说在这句里，而不是只写在下面那行小字里：用户先看到的是这句。
-        if (imeVersion != null && !Config.VERIFIED_IME_VERSION.equals(imeVersion)) {
-            sb.append("\n豆包输入法是 ").append(imeVersion)
-                    .append("，模块验收的是 ").append(Config.VERIFIED_IME_VERSION)
-                    .append("——手势可能不工作。");
+            sb.append("\n但手势钩子没挂上——豆包输入法的触摸接口变了，"
+                    + "模块抓不到按键，下滑不会触发。");
+        } else if (hb.svcKnown && !hb.svc) {
+            // 钩子挂上了但动作通道没接上：手势判得出来，快捷键执行不了。
+            sb.append("\n但动作通道没接上——手势能判出来，快捷键不会执行。");
+        } else if (isBrokenFire(hb.fireResult)) {
+            // 运行时证据：上一次快捷键确实执行失败了，且失败在模块这一侧。
+            sb.append("\n上一次快捷键没执行成功（").append(hb.fireText)
+                    .append("）——动作通道可能已经不通了。");
         }
         return sb.toString();
+    }
+
+    /**
+     * 执行结果里哪些属于"模块坏了"。
+     *
+     * <p>{@code ok} 正常；{@code editor} 是编辑器自己拒绝（没选区时复制、空撤销栈时撤销），
+     * 日常就会发生，**不能报警**——把它当故障和拿版本号当判据是同一个错误。
+     */
+    private static boolean isBrokenFire(String result) {
+        return "nochannel".equals(result) || "noresid".equals(result)
+                || "exception".equals(result);
     }
 
     private String configState(File f) {
@@ -423,10 +431,17 @@ public class SettingsActivity extends Activity {
         String detail = "无记录（模块可能还没注入过）";
         /** 配置文件此刻读不读得到。两种失败要在状态句里说成不同的话。 */
         boolean configReadable;
-        /** 钩子挂上了没有。false = 豆包可能已升级，钩子目标变了。 */
+        /** 钩子挂上了没有。false = 豆包改了钩子目标，模块抓不到按键。 */
         boolean hooked = true;
         /** 旧版心跳没有 hooked= 字段，这时不能判"没挂上"，只能说不知道。 */
         boolean hookedKnown;
+        /** 动作通道（ImeService 构造钩子）接上了没有。 */
+        boolean svc = true;
+        boolean svcKnown;
+        /** 最近一次快捷键执行；null = 还没执行过。 */
+        String fireText;
+        /** 最近一次执行的结果分类，见 Actions.LAST_RESULT。null = 无记录。 */
+        String fireResult;
     }
 
     /**
@@ -478,11 +493,14 @@ public class SettingsActivity extends Activity {
                     main = s;               // 主进程：键盘在这里
                 }
             }
-            // 钩子状态从主进程那一行里取。第三段形如 "pid=123 hooked=true"。
+            // 钩子与动作通道状态从主进程那一行里取，形如 "pid=123 hooked=true svc=true"。
             if (main != null) {
                 hb.hookedKnown = true;
                 hb.hooked = main.contains("hooked=true");
+                hb.svcKnown = true;
+                hb.svc = main.contains("svc=true");
             }
+            readLastFire(file.getParentFile(), hb);
             if (main == null) {
                 hb.detail = "只记录到子进程，还没记录到键盘进程\n共 " + procs.size() + " 个进程写过";
                 return hb;
@@ -494,6 +512,55 @@ public class SettingsActivity extends Activity {
         } catch (Throwable t) {
             hb.detail = "读取失败：" + t;
             return hb;
+        }
+    }
+
+    /**
+     * 读执行结果日志的最后一行：「epochMillis 动作 result=分类」。
+     *
+     * <p>只取最后一行——设置页要回答的是"最近一次怎么样"，不是历史统计。
+     */
+    private static void readLastFire(File dir, Heartbeat hb) {
+        File file = new File(dir, Config.FIRE);
+        if (!file.exists() || file.length() == 0) {
+            return;
+        }
+        try {
+            RandomAccessFile raf = new RandomAccessFile(file, "r");
+            try {
+                long len = raf.length();
+                long start = Math.max(0, len - 4096);
+                raf.seek(start);
+                byte[] buf = new byte[(int) (len - start)];
+                raf.readFully(buf);
+                String tail = new String(buf, "UTF-8");
+                String last = null;
+                for (String line : tail.split("\\n")) {
+                    if (!line.trim().isEmpty()) {
+                        last = line.trim();
+                    }
+                }
+                if (last == null) {
+                    return;
+                }
+                String[] parts = last.split(" ", 3);
+                hb.fireResult = parts.length > 2 && parts[2].startsWith("result=")
+                        ? parts[2].substring("result=".length()) : null;
+                String action = parts.length > 1 ? parts[1] : "?";
+                String when = "";
+                try {
+                    when = new java.text.SimpleDateFormat("MM-dd HH:mm", Locale.US)
+                            .format(new java.util.Date(Long.parseLong(parts[0])));
+                } catch (Throwable ignored) {
+                    // 时间坏了只影响这一行的可读性
+                }
+                // 用逗号而不是括号：这句话后面会被嵌进状态句的括号里，套两层括号不好读。
+                hb.fireText = action + " → " + hb.fireResult + (when.isEmpty() ? "" : "，" + when);
+            } finally {
+                raf.close();
+            }
+        } catch (Throwable t) {
+            hb.fireText = "读取失败：" + t;
         }
     }
 

@@ -127,39 +127,66 @@ final class Actions {
 
     // ---------------------------------------------------------------- 动作
 
+    /**
+     * 最近一次快捷键执行的结果分类，设置页靠它判断「模块还可用吗」。
+     *
+     * <p>五类里前三类是**模块侧坏了**，值得报警：
+     * <ul>
+     *   <li>{@code nochannel}：没有一个 ImeService 实例拿得到输入连接——动作通道断了；</li>
+     *   <li>{@code noresid}：动作名查不到资源 id——豆包改版后 id 漂移的典型症状；</li>
+     *   <li>{@code exception}：调用抛异常。</li>
+     * </ul>
+     * 后两类不报警：{@code editor} 是编辑器自己拒绝（没选区时复制、空撤销栈时撤销），
+     * 日常就会发生；{@code noaction} 是异常残局下的空动作名。
+     * 把 editor 当成"坏了"会天天误报——那和拿版本号当判据是同一个错误。
+     */
+    static volatile String LAST_RESULT = "";
+
     /** @return 动作是否执行成功；失败时已经尝试过兜底通道。 */
     static boolean perform(String action) {
         if (action == null) {
             // 正常路径不会走到这里；异常残局下 finish() 可能带着 null 动作名下来。
             Log.w("没有动作名，本次快捷键不执行");
+            LAST_RESULT = "noaction";
             return false;
         }
         InputConnection ic = connection();
         if (ic == null) {
             Log.w("没有输入连接，" + action + " 未执行");
+            LAST_RESULT = "nochannel";
             return false;
         }
+        boolean ok;
         if ("copy".equals(action)) {
-            return copy(ic);
+            ok = copy(ic);
+        } else if ("paste".equals(action)) {
+            ok = paste(ic);
+        } else {
+            ok = contextMenuAction(ic, action);
         }
-        if ("paste".equals(action)) {
-            return paste(ic);
+        if (ok) {
+            LAST_RESULT = "ok";             // 兜底通道成功也算成功
         }
-        return contextMenuAction(ic, action);
+        return ok;
     }
 
     private static boolean contextMenuAction(InputConnection ic, String name) {
         int id = resId(name);
         if (id <= 0) {
             Log.once("resid-" + name, "找不到资源 id：" + name + "，该动作不可用");
+            LAST_RESULT = "noresid";
             return false;
         }
         try {
             boolean ok = ic.performContextMenuAction(id);
             if (Log.DEBUG) Log.i("performContextMenuAction(" + name + ", " + id + ") = " + ok);
+            if (!ok) {
+                LAST_RESULT = "editor";     // 编辑器自己拒绝，日常正常，不报警
+            }
             return ok;
         } catch (Throwable t) {
             Log.e("performContextMenuAction(" + name + ") 失败", t);
+            LAST_RESULT = "exception";
             return false;
         }
     }
