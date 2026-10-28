@@ -92,8 +92,11 @@ private static final float BOTTOM_FRAC = 3.75f / 909f;    // 底部内边距
 
 - **详细日志（DEBUG）**：拨一下即可。**下一次按键就生效，不用重启输入法**，也不用重新打包。
 - **诊断信息**：模块与豆包输入法的版本、当前配置值、配置文件路径、键盘进程最近一次被注入的
-  时间。模块没生效时先看这一屏——「键盘进程」一直是空的，说明模块没注入到豆包，
-  问题在 LSPosed 那边，不在这几个开关上。
+  时间、最近一次快捷键的执行结果。模块没生效时先看这一屏——「键盘进程」一直是空的，
+  说明模块没注入到豆包，问题在 LSPosed 那边，不在这几个开关上。
+- **顶部那句话就是结论**：只在这四种情况转成提示——没注入、钩子没挂上、动作通道没接上、
+  上一次快捷键在模块侧失败。没选区时复制、空撤销栈时撤销这类"编辑器自己拒绝"不算故障，
+  不会提示。
 
 配置存在模块 App 的 `SharedPreferences` 里，由 LSPosed 重定向到一个输入法进程读得到的
 共享目录。配置读不到时会回落到代码里的默认值（`Config.DEFAULT_DEBUG`），键盘不会因此变哑。
@@ -117,12 +120,12 @@ performContextMenuAction(copy, 16908321) = true
 `事件 action=…` 是逐事件日志：`action` 是引擎透出的动作码（0 按下、1 抬起、
 2 移动、5 第二根手指按下），`handle` 在同一段触摸里保持不变。多指问题只能靠它定位。
 
-排障时先看 `view=` 后面的尺寸和 `字母=`：键盘在**屏幕上**的位置会随版面变化，
-屏幕坐标不能直接当视图坐标用（视图局部坐标 = 屏幕坐标 − 视图顶边，本机 1401）。
-2026-10-26 的复测里，带与不带候选栏都是 `view=1080x909` 且落键不变；
-但顶层边本身会变，所以标定以这一行为准，不要缓存那个换算。
+排障时先看 `view=` 后面的尺寸和 `字母=`：屏幕坐标不能直接当视图坐标用
+（视图局部坐标 = 屏幕坐标 − 视图顶边）。本机实测视图顶边恒为屏幕 y=1401、高度 909，
+候选栏出现时也不变；但横屏与悬浮键盘没测过，所以标定以日志里这一行为准，不要缓存换算。
 
-默认值见 `Config.DEFAULT_DEBUG`（发版应为 `false`）：每个触摸都会打日志，长期开会淹掉 LSPosed 日志。
+默认值见 `Config.DEFAULT_DEBUG`（当前 `true`，交付包也保持开启；长期使用请在设置页拨掉）：
+每个触摸都会打日志，开着会淹掉 LSPosed 日志。
 
 ## 注意事项
 
@@ -151,14 +154,19 @@ performContextMenuAction(copy, 16908321) = true
 
 ```
 app/src/main/java/app/xuan/doubaoslide/
-  XposedEntry.java   入口，按包名注入，跨 ClassLoader 去重
-  SlideHook.java     反射调用 nativeTouch、扣事件、整段补发
-  GestureGate.java   纯判定状态机（FIRE / DEAD / REPLAY …），JVM 可测
-  Actions.java       动作层：InputConnection + 剪贴板兜底
-  BoardGuard.java    棋盘守卫：只在 kPinyin26 / kEnglish26 上武装
-  Geometry.java      26 键几何模型
-  Log.java           日志开关
+  XposedEntry.java    入口，按包名注入，跨 ClassLoader 去重
+  SlideHook.java      反射调用 nativeTouch、扣事件、整段补发
+  GestureGate.java    纯判定状态机（FIRE / DEAD / REPLAY …），JVM 可测
+  Geometry.java       26 键几何模型，JVM 可测
+  Actions.java        动作层：InputConnection + 剪贴板兜底
+  BoardGuard.java     棋盘守卫：只在 kPinyin26 / kEnglish26 上武装
+  Log.java            日志与两个诊断文件的写侧
+  Config.java         存储契约：prefs 名、键名、默认值
+  Diagnostics.java    诊断文件的读侧（设置页解析用）
+  SettingsActivity.java  设置页，跑在模块自己的进程里
 ```
+
+架构分层、调用链与数据流见 [`doc/13-架构.md`](doc/13-架构.md)。
 
 ## 验收
 

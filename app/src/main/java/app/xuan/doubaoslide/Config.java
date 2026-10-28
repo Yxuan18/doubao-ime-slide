@@ -49,8 +49,8 @@ final class Config {
     /**
      * 配置文件缺失或读不到时的默认值。
      *
-     * <p><b>发版前改回 {@code false}</b>：交付包默认应该是安静的，用户要日志自己去设置页打开。
-     * 现在保持 {@code true} 是因为排障期还没结束。
+     * <p><b>交付包也保持 {@code true}</b>（2026-10-28 决定）：日志留着，出问题时设置页与
+     * LSPosed 日志里都有线索；嫌吵的人在设置页拨掉即可。发布清单核对的是这一行。
      */
     static final boolean DEFAULT_DEBUG = true;
 

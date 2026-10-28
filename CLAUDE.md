@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 一个**没有 Activity 的 APK**：靠清单里的 `xposedmodule` meta-data + `assets/xposed_init` 让 LSPosed 认出它，作用域只有 `com.bytedance.android.doubaoime`。运行时在豆包输入法的 `KeyboardView.nativeTouch(long handle, int x, int y, int action, long time)` 上挂钩，把「按住字母向下滑」翻译成快捷键。
 
-工作区级的中文写作与证据分级规则在 `../AGENTS.md`（仅本地存在）；本文件只写本仓特有的东西。参考性的细节都拆到了 `doc/`，见文末索引。
+本文件是仓库手册（唯一权威）。仓内还有一个 [`AGENTS.md`](AGENTS.md)，是给 Codex / agy 的
+**导航入口**，只放摘要与链接、冲突时以本文件为准。工作区级的中文写作与证据分级规则在
+`../AGENTS.md`（仓库外，仅本机存在，与本仓这两份不同）。参考性的细节都拆到了 `doc/`，见文末索引。
 
 ## 构建与装机
 
@@ -46,8 +48,8 @@ lane 配置在 `.claude/tdd-guardian/config.json`（门禁默认不自动拦截�
 候选栏出现时也不变，见 `doc/08` §6）。
 
 `Log.DEBUG` 是**运行时开关**：装完 APK 从桌面图标打开设置页拨一下，**下一次按键就生效，
-不需要重启输入法**。配置文件读不到时回落到 `Config.DEFAULT_DEBUG`——**发版前把它改成 `false`**，
-交付包默认应该是安静的。
+不需要重启输入法**。配置文件读不到时回落到 `Config.DEFAULT_DEBUG`——**交付包也保持 `true`**
+（2026-10-28 决定：留着日志，用户遇到问题时设置页和日志里都有线索；嫌吵的人在设置页拨掉即可）。
 
 它是 `volatile` 而不是 `static final`：编译期常量会被 javac 内联，取 `false` 时
 `if (Log.DEBUG)` 整块被删掉，运行时就再也打不开了。
@@ -69,18 +71,7 @@ lane 配置在 `.claude/tdd-guardian/config.json`（门禁默认不自动拦截�
 | `SettingsActivity` | 设置页：一个 DEBUG 开关 + 一屏诊断。跑在模块自己的进程里，不在豆包进程里 |
 | `Diagnostics` | 读心跳 / 执行结果两个诊断文件，解析成设置页能直接用的说法。不依赖 Activity，与 `Log` 一侧共同定义文件格式 |
 
-`GestureGate` 的判定（`FIRE`=60px、`GATE`=12px，视图高 909 时）：
-
-```
-maxDy > FIRE                      触发快捷键（带触感）
-向下 maxDy > GATE 且终点没回到起点上方   作废：不打字也不触发
-其余（轻点 / 上滑 / 横滑）              按原坐标、原时间戳、原顺序整段补发
-见过第二根手指（action=5）              跳过快捷键判定，整段补发
-按住 HAND_BACK_MS(300ms) 没滑过 FIRE    把这次按下归还给引擎，让长按浮层能画出来
-归还后横移 > 24px 且大于纵移           整段交给引擎（长按浮层里选字），不触发快捷键
-引擎发来 LEAVE(-1)                     永远不清判定状态；已归还时放行（引擎要靠它画浮层第二格），
-                                      未归还时吞掉
-```
+`GestureGate` 的判定表（七条规则、`FIRE`/`GATE` 阈值）见 `doc/13-架构.md` §4。
 
 三条必须读懂的不变量：
 
@@ -140,14 +131,14 @@ maxDy > FIRE                      触发快捷键（带触感）
 - 不写空 `catch`；至少一行日志（本仓用 `Log.once` / `Log.e`）。
 - 不做大文件全量读。
 
-P1 / P2 清单、例外认账与 Spike 规则见 `doc/03-工程红线.md`（裁剪自 `~/SEC/tstools/CLAUDE.md`）。
+P1 / P2 清单、例外认账与 Spike 规则见 `doc/03-工程红线.md`（裁剪自本机的 `~/SEC/tstools/CLAUDE.md`，仓库外文件）。
 
 ## 方案讨论（防顺从）
 
 默认动作是 **"我不信没有人做过，去找"**。新功能立项前先答 JTBD 三问（什么情境下的
 什么 Job / 现在怎么解决 / 比现状好多少），答不出具体数字就不立项；最大的竞争者通常是
 "手动做"和"不做"。完整规则与本仓例证见 `doc/04-方案讨论与防顺从.md`，
-工作区级同一套规则在 `../AGENTS.md`。
+同一套规则在仓内 `AGENTS.md` 摘要、工作区级原文在 `../AGENTS.md`。
 
 ## 发布
 
@@ -159,7 +150,7 @@ gh release create vX.Y.Z app/build/outputs/apk/release/app-release.apk \
 
 - APK 用 Android 通用 debug 证书签名（`app/build.gradle.kts`）。换签名必须先卸载。
 - 不往仓库或 release 里放打包好的第三方 APK（豆包本体、LSPatch 打出来的成品）。
-- 发布前核对：`versionName`/`versionCode`、`Log.DEBUG == false`、`ACCEPTANCE.md` 是否补了新行。
+- 发布前核对：`versionName`/`versionCode`、`Config.DEFAULT_DEBUG == true`、`ACCEPTANCE.md` 是否补了新行。
 
 ## 输出风格
 
@@ -171,7 +162,7 @@ gh release create vX.Y.Z app/build/outputs/apk/release/app-release.apk \
 
 ## 执行要求
 
-- 先读文件，再动手。改动前先看 `ACCEPTANCE.md` 与相关 `doc/`。
+- 先读文件，再动手。改动前先看 `ACCEPTANCE.md`；碰手势判定时再读 `doc/13-架构.md` §4 的判定表。
 - 倾向编辑，不倾向重写。
 - **声称完成前必须测试**：改 `.java` 至少跑 `./gradlew :app:testDebugUnitTest`，
   改手势行为还必须真机跑一遍并补 `ACCEPTANCE.md` 一行。
@@ -183,7 +174,7 @@ gh release create vX.Y.Z app/build/outputs/apk/release/app-release.apk \
 - `README.md`：面向用户的用法、调阈值、排障日志格式。
 - 模块日志：`/data/adb/lspd/log/modules_*.log`（grep `DoubaoSlide`）；系统原生崩溃：`/data/system/dropbox/`（`system_app_native_crash@*.txt`）。
 
-`doc/` 下是非主线参考，按需查，不必通读：
+`doc/` 下是非主线参考，只在本文件、`ACCEPTANCE.md`、`README.md` 引用到它时才查，不必通读：
 
 | 文件 | 内容 |
 |---|---|
@@ -198,5 +189,9 @@ gh release create vX.Y.Z app/build/outputs/apk/release/app-release.apk \
 | `doc/09-逆向-文本与编辑能力面.md` | 剪贴板历史/常用语/清空；撤销无效的源码解释 |
 | `doc/10-逆向-架构与工程借鉴.md` | Java/native 分工、混淆策略、179 MB 的真实体积分布 |
 | `doc/11-逆向-用户体验观察.md` | 豆包的设置体系与反馈设计；模块与原生行为的四处不一致 |
+| `doc/12-产品需求.md` | 目标、已实现功能、功能边界（明确不做的七条）|
+| `doc/13-架构.md` | 技术栈、目录、分层、触摸调用链、配置与诊断数据流 |
+| `doc/14-设计规范.md` | 设置页与图标的既有规范：色板、字号、间距、文案 |
+| `doc/15-待办任务.md` | 待办清单：优先级、验收标准、出处 |
 
 `tools/adb-root.sh`：等设备回来再执行一条 root shell 命令（USB 会掉线）。

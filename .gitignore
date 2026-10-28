@@ -23,3 +23,6 @@ captures/
 # tdd-guardian generated artifacts
 .claude/tdd-guardian/state.json
 .claude/tdd-guardian/receipts.json
+
+# nlpm generated artifacts
+.claude/nlpm-history.json

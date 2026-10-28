@@ -1,7 +1,19 @@
 ---
 name: adb-device
-description: 在本机 Android 设备（小米 14 Pro / Android 16）上操作与取证：root shell、取控件文本、截图、注入触摸、读 LSPosed 模块日志、查进程与加载的 so。需要验证真机行为、抓日志、装 APK、模拟手势时使用。含 su -c 引号陷阱、设备掉线、日志文件随进程切换等踩过的坑。
-version: 1.0.0
+description: |
+  在本机 Android 设备（小米 14 Pro / Android 16）上操作与取证：root shell、取控件文本、截图、注入触摸、读 LSPosed 模块日志、查进程与加载的 so。需要验证真机行为、抓日志、装 APK、模拟手势时使用。含 su -c 引号陷阱、设备掉线、日志文件随进程切换等踩过的坑。
+  <example>
+  Context: 改完手势代码，要在真机上确认下滑复制有没有触发
+  user: "装一下新包，按住 C 往下滑，看复制生效没有"
+  assistant: "按本手册装包 → force-stop 紧跟 ime set 重启输入法 → 用 input motionevent 发 DOWN、长按、MOVE、UP → 抓 LSPosed 模块日志确认 FIRE 与 result=ok。"
+  </example>
+  <example>
+  Context: 用户报告键盘手势失灵，要先判断模块还挂着没有
+  user: "下滑没反应了，帮我查一下"
+  assistant: "取最新的 modules_*.log 看心跳行的 hooked= 与 svc=，再取 fire.log 末行看 result=，据此区分没注入、钩子没挂上、动作通道没接上。"
+  </example>
+metadata:
+  version: 1.0.0
 ---
 
 # 真机操作（adb）
@@ -65,8 +77,9 @@ sh tools/adb-root.sh 'dumpsys window | grep -m1 mCurrentFocus'
 # 进程与 pid（pidof 有时查不到，用 ps）
 sh tools/adb-root.sh 'ps -A | grep doubao'
 
-# 进程加载了哪些 so
-sh tools/adb-root.sh 'grep -o "/[^ ]*\.so" /proc/<pid>/maps | sort -u'
+# 进程加载了哪些 so。pid 先在宿主侧取到，不能把 <pid> 原样塞进 root 命令
+P=$(sh tools/adb-root.sh 'pidof com.bytedance.android.doubaoime' | tr -d '\r')
+sh tools/adb-root.sh "grep -o '/[^ ]*\.so' /proc/$P/maps | sort -u"
 ```
 
 ### 模块日志：每次重启 IME 都会换文件
@@ -116,10 +129,10 @@ sh tools/adb-root.sh 'input motionevent DOWN 432 2025'     # 逐条控制时序
 
 - `input tap/swipe` 用**屏幕坐标**
 - `KeyboardView.nativeTouch` 收的是**视图局部坐标**
-- 本机键盘视图：1080×909，顶边在屏幕 y=1401（候选栏出现时也不变）
-- 屏幕 y → 视图 y：`y_view = y_screen - 1401`
-
-拿不准就先用设置页/日志里的 `DOWN x,y view=WxH` 标定，再谈结果。
+- 换算关系：`y_view = y_screen - 视图顶边`。**本机当前值见 `doc/08` §3**（那里也记了推导来源），
+  本文件不抄具体像素——抄了就会与那边不同步
+- 拿不准就先用日志里的 `DOWN x,y view=WxH` 标定一次，反推出视图顶边，再谈结果；
+  候选栏出现/消失、横屏、悬浮都可能改变它
 
 ## 停下来先问的情况
 
