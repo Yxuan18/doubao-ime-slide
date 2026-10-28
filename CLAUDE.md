@@ -26,6 +26,10 @@ sh tools/adb-root.sh 'ls -t /data/adb/lspd/log/modules_*.log | head -1'
 而不是裸 `adb shell`（它会等设备回来再执行）。
 展开与其它坑见 `doc/02-调试与验收手册.md`。
 
+真机操作的手册在 `.claude/skills/adb-device/SKILL.md`（`su -c` 引号、设备掉线、日志随进程换文件、
+截图裁剪、触摸注入与坐标换算）。要跑一整段设备任务时派 `.claude/agents/adb-runner` 子代理，
+它只碰设备、不改仓库代码。
+
 ## 验收
 
 **手势行为没有自动化测试，也没接 CI。** 唯一验收是真机手势 + 模块日志 + 控件树，
